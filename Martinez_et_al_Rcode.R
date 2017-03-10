@@ -2,62 +2,6 @@
 #### Differential expression and variability analysis #########
 ###############################################################
 
-library(BASiCS)
-
-#### Generation of MCMC objects ###############################
-
-# Read in data
-input <- read.table("/path/to/file", header = TRUE, sep = "\t")
-
-# Split biological genes and spike-ins
-bio.g <- input[which(grepl("ENSMUS", rownames(input))),]
-ERCC <- input[which(grepl("ERCC", rownames(input))),]
-
-# Read in ERCC concentrations
-cur.url <- "https://tools.thermofisher.com/content/sfs/manuals/cms_095046.txt"
-download.file(url = cur.url, destfile = basename(cur.url), mode = "w")
-ERCC.conc <- read.table("path/to/cms_095046.txt", header=TRUE, sep = "\t", fill = TRUE)
-
-# Calculate total number of ERCC molecules per well
-ERCC.num <- matrix(data=NA, nrow=nrow(ERCC.conc), ncol=1)
-ERCC.num[,1] <- (ERCC.conc[,4]*(10^(-18)))*(6.0221417*(10^23))
-ERCC.num.final <- ERCC.num/50000 # dilution factor
-rownames(ERCC.num) <- rownames(ERCC.num.final) <- ERCC.conc[,2]
-
-# Pre-scale reads to adjust for differences in library size
-rpm <- (bio.g/colSums(bio.g))*1000000
-
-# Filtering on genes
-cell.count <- apply(rpm, 1, function(n){length(which(n > 20))})
-bio.g.1 <- bio.g[names(which(cell.count > 2)),]
-ERCC.1 <- ERCC[rowSums(ERCC) > 0, ]
-
-# Forming the Data object
-Counts <- rbind(bio.g.1, ERCC.1)
-Tech <- c(rep(FALSE, nrow(bio.g.1)), rep(TRUE, nrow(ERCC.1)))
-SpikeInput <- ERCC.num.final[rownames(ERCC.1),1]
-SpikeInput.1 <- data.frame("Name" = names(SpikeInput),
-                           "Molecules" = SpikeInput,
-                           stringsAsFactors = FALSE)
-
-Data <- newBASiCS_Data(as.matrix(Counts), Tech, SpikeInput.1)
-
-# Starting the MCMC - log-normal prior on delta if genes have zero counts
-MCMC_Output <- BASiCS_MCMC(Data, N = 40000, Thin = 20, 
-                           Burn = 20000, PrintProgress = TRUE, 
-                           PriorDelta = "log-normal")
-
-# Check for Chain convergence
-plot(MCMC_Summary, Param = "delta") #### cell-to-cell heterogeneity regarding to mRNA content
-plot(MCMC_Summary, Param = "s") #### possible evidence of cell-to-cell differeces in capture efficiency 
-plot(MCMC_Output, Param = "delta", Gene = 1)
-plot(MCMC_Output, Param = "mu", Gene = 1)
-plot(MCMC_Output, Param = "s", Cell = 20)
-
-#### Retrieving normalized counts ###############################
-DenoisedCounts = BASiCS_DenoisedCounts(Data = Data, Chain = MCMC_Output)
-DenoisedRates = BASiCS_DenoisedRates(Data = Data, Chain = MCMC_Output)
-
 #### Differential expression and variability testing ############
 ### For testing 2 MCMC objects are needed
 MCMC.A <- MCMC_output.1
@@ -354,6 +298,27 @@ pheatmap(log10(Data[genes.B6[order(rowMeans(Data[genes.B6,]), decreasing = TRUE)
 
 pheatmap(log10(Data[genes.CAST[order(rowMeans(Data[genes.CAST,]), decreasing = TRUE)],] + 1), cluster_rows = FALSE, fontsize_row = 2, fontsize_col = 4, cellwidth = 3, cellheight = 3, colorRampPalette(colors = c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100)[1:round(log10(max(Data[genes.CAST,]))/6*100, 0)], border_color = NA, cluster_cols = FALSE, gaps_col = c(30,60,90))
 
+### Figure 3C
+# We used the lists for species specific and shared activation genes in DAVID for GO analysis
+# Here we read in the results from DAVID on biological process
+# For visualization purposes we merged similar GOs and removed GOs with adj. P-value = 1
+results <- read.table("/path/to/GO_shared_genes.txt", header = TRUE, sep = '\t')
+par(mar = c(16,4,1,4))
+barplot(height = -log10(results$Bonferroni), col = "white", names.arg = results$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
+abline(a = 1, b = 0, col = "red", lwd = 2)
+
+results.B6 <- read.table("/path/to/GO_B6_genes.txt", header = TRUE, sep = '\t')
+par(mar = c(16,4,1,4))
+barplot(height = -log10(results.B6$Bonferroni), col = "white", names.arg = results.B6$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
+abline(a = 1, b = 0, col = "red", lwd = 2)
+
+results.CAST <- read.table("/path/to/GO_CAST_genes.txt", header = TRUE, sep = '\t')
+par(mar = c(16,4,1,4))
+barplot(height = -log10(results.CAST$Bonferroni), col = "white", names.arg = results.CAST$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
+abline(a = 1, b = 0, col = "red", lwd = 2)
+
+### Figure 3D
+
 ### Look at frequencies - downsampled genes to 70
 genes.shared <- shared.a[sample(1:length(shared.a), 70)]
 genes.B6 <- B6.spec.a[sample(1:length(B6.spec.a), 70)]
@@ -363,47 +328,12 @@ shared.cells <- Data[genes.shared, which(grepl("active", colnames(Data)))]
 B6.cells <- exp.data[genes.B6, which(grepl("active", colnames(Data)))]
 CAST.cells <- exp.data[genes.CAST, which(grepl("active", colnames(Data)))]
 
-
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fig4D_shared.pdf"),  width = 7, height = 7, useDingbats = TRUE)
 plot(hist(apply(shared.cells[sample(1:nrow(shared.cells), 70),], 1, function(n){length(which(n > 0))/ncol(shared.cells)}), breaks = 20), xlim = c(0,1),ylim = c(0,30))
 abline(v = median(apply(shared.cells, 1, function(n){length(which(n > 0))/ncol(shared.cells)})))
-dev.off()
 
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fig4D_B6.pdf"),  width = 7, height = 7, useDingbats = TRUE)
 plot(hist(apply(B6.cells[sample(1:nrow(B6.cells), 70),], 1, function(n){length(which(n > 0))/ncol(B6.cells)}), breaks = 20), xlim = c(0,1),ylim = c(0,30))
 abline(v = median(apply(B6.cells, 1, function(n){length(which(n > 0))/ncol(B6.cells)})))
-dev.off()
 
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fig4D_CAST.pdf"),  width = 7, height = 7, useDingbats = TRUE)
 plot(hist(apply(CAST.cells[sample(1:nrow(CAST.cells), 70),], 1, function(n){length(which(n > 0))/ncol(CAST.cells)}), breaks = 20), xlim = c(0,1),ylim = c(0,30))
 abline(v = median(apply(CAST.cells, 1, function(n){length(which(n > 0))/ncol(CAST.cells)})))
-dev.off()
 
-
-### D) GO categories
-write.table(as.data.frame(B6_CAST_active$GeneNames[B6_CAST_active$ResultDiffExp != "ExcludedByUser"]), "/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Fig4D_background.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
-write.table(as.data.frame(as.character(genenames[match(shared.a, genenames[,2]),1])), "/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Fig4D_shared.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
-write.table(as.data.frame(as.character(genenames[match(B6.spec.a, genenames[,2]),1])), "/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Fig4D_B6.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
-write.table(as.data.frame(as.character(genenames[match(CAST.spec.a, genenames[,2]),1])), "/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Fig4D_CAST.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
-
-results <- read.table("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/GO_shared_genes.txt", header = TRUE, sep = '\t')
-results <- results[results$Bonferroni < 0.8,]
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fi4D_shared.pdf"),  width = 10, height = 10, useDingbats = TRUE)
-par(mar = c(16,4,1,4))
-barplot(height = -log10(results$Bonferroni), col = "white", names.arg = results$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
-abline(a = 1, b = 0, col = "red", lwd = 2)
-dev.off()
-
-results.B6 <- read.table("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/GO_B6_genes.txt", header = TRUE, sep = '\t')
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fig4D_B6.pdf"),  width = 10, height = 10, useDingbats = TRUE)
-par(mar = c(16,4,1,4))
-barplot(height = -log10(results.B6$Bonferroni), col = "white", names.arg = results.B6$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
-abline(a = 1, b = 0, col = "red", lwd = 2)
-dev.off()
-
-results.CAST <- read.table("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/GO_CAST_genes.txt", header = TRUE, sep = '\t')
-pdf(file = paste("/Users/eling01/Google Drive/scMouse_Immun/Manuscript/Figures/Fig4D_CAST.pdf"),  width = 10, height = 10, useDingbats = TRUE)
-par(mar = c(16,4,1,4))
-barplot(height = -log10(results.CAST$Bonferroni), col = "white", names.arg = results.CAST$Term, las = 2, cex.names = 0.5, ylim = c(0,5))
-abline(a = 1, b = 0, col = "red", lwd = 2)
-dev.off()
