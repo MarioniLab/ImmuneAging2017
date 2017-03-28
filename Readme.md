@@ -2,14 +2,14 @@
 
 The R scripts for read mapping and counting, computational filtering (quality control), normalisation, differential expression analysis and for figure generation can be found in this repository. 
 
-* The Makefile for read alignment and counting can be found in [Mapping](../tree/master/Mapping/).
+* The Makefile for read alignment and counting can be found in [Mapping](../blob/master/Mapping/).
 
-* Quality control and filtering of low quality cells/genes is described in [Quality_control](../tree/master/Quality_control/). This folder contains the scripts to reproduce Fig. S1 and Fig. S2.
+* Quality control and filtering of low quality cells/genes is described in [Quality_control](../blob/master/Quality_control/). This folder contains the scripts to reproduce Fig. S1 and Fig. S2.
 
-* [Normalisation](../tree/master/Normalisation/) contains scripts to normalise scRNAseq data using the [BASiCS](https://github.com/catavallejos/BASiCS) package.
+* [Normalisation](../blob/master/Normalisation/) contains scripts to normalise scRNAseq data using the [BASiCS](https://github.com/catavallejos/BASiCS) package.
 
-* The [Differential_testing](../tree/master/Differential_testing/) repository holds scripts that perform differential expression and differential variability testing of scRNAseq data.
+* The [Differential_testing](../blob/master/Differential_testing/) repository holds scripts that perform differential expression and differential variability testing of scRNAseq data.
 
-* All scripts to reproduce the main and supplementary figures can be found in [Analysis]((../tree/master/Analysis/))
+* All scripts to reproduce the main and supplementary figures can be found in [Analysis]((../blob/master/Analysis/))
 
-* Raw and normalised transcript counts as well as some metadata information are available in [Data]((../tree/master/Data/))
+* Raw and normalised transcript counts as well as some metadata information are available in [Data]((../blob/master/Data/))
