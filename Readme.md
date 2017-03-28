@@ -6,7 +6,7 @@ The R scripts for read mapping and counting, computational filtering (quality co
 
 * Quality control and filtering of low quality cells/genes is described in [Quality_control](https://github.com/MarioniLab/ImmuneAging2017/tree/master/Quality_control/). This folder contains the scripts to reproduce Fig. S1 and Fig. S2.
 
-* [Normalisation](../blob/master/Normalisation/) contains scripts to normalise scRNAseq data using the [BASiCS](https://github.com/catavallejos/BASiCS) package.
+* [Normalisation](../master/Normalisation/) contains scripts to normalise scRNAseq data using the [BASiCS](https://github.com/catavallejos/BASiCS) package.
 
 * The [Differential_testing](https://github.com/MarioniLab/ImmuneAging2017/tree/master/Differential_testing/) repository holds scripts that perform differential expression and differential variability testing of scRNAseq data.
 
