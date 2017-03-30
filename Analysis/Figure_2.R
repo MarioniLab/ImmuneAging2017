@@ -32,7 +32,7 @@ ggplot(data = tsne.df, aes(tsne.1, tsne.2)) +
   xlab("tSNE 2") 
 
 
-# Fig 2B
+#### Fig 2B
 # Scatterplot of DE genes
 # Load a BASiCS Test dataframe tested on logFC=2 (Test_logFC2) and logFC=0 (Test_logFC0) between naive and activated cells
 for.plot <- Test_logFC2$Table

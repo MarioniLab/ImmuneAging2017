@@ -67,10 +67,10 @@ CAST.spec <- as.character(CAST$GeneNames)
 
 ### Remove genes that are caused by mapping artifacts - See quality control
 # B6 and CAST samples mapped to CAST genome
-load("/Users/eling01/Google Drive/scMouse_Immun/Analysis/Variance/DV_DE_mappingArtefacts.RData")
+load("/path/to/Test_logFC2_file_CAST/")
 DE.CAST.map <- Test_logFC2$Table
 # B6 and CAST samples mapped to B6 genome
-load("/Users/eling01/Google Drive/scMouse_Immun/Analysis/Variance/DV_DE_mappingArtefacts_B6.RData")
+load("/path/to/Test_logFC2_file_B6/")
 DE.B6.map <- Test_logFC2$Table
 
 # Collect genes that are differenttially mapped between the two Genomes - for B6 and CAST
