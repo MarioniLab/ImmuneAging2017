@@ -1,0 +1,210 @@
+---
+title: "Figure S5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the analyses for Figure S5.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+library(pheatmap)
+```
+
+Load in the chains.
+
+```{r}
+MCMC.CAST.naive <- readRDS("../../../MCMCs/chain_CAST.naive.Rds")
+MCMC.CAST.active <- readRDS("../../../MCMCs/chain_CAST.active.Rds")
+
+# Read in metadata file
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+rownames(CD4.metadata) <- CD4.metadata$X
+
+norm.counts <- readRDS("../../../Results/norm_counts.rds")
+CD4.metadata <- CD4.metadata[colnames(norm.counts),]
+
+CD4.raw <- read.table("raw_data.txt", header = TRUE, sep = "\t")
+```
+
+Calculate tSNE on normalized counts
+
+```{r}
+naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(naive_cells) <- paste("Naive", colnames(naive_cells), sep = "_") 
+
+active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(active_cells) <- paste("Active", colnames(active_cells), sep = "_") 
+
+
+cur_cells <- cbind(naive_cells, active_cells)
+
+# Compute tSNE
+library(Rtsne)
+set.seed(1234)
+tsne <- Rtsne(t(log10(cur_cells + 1)), perplexity = 10)
+
+tsne.df <- data.frame(tsne.1 = tsne$Y[,1], tsne.2 = tsne$Y[,2], 
+                      activation = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[1]}))
+
+# Plot tSNE
+naive_active_tsne <- ggplot(data = tsne.df, aes(tsne.1, tsne.2)) + 
+  geom_point(aes(shape = activation), size = 4) +
+  scale_shape_manual(values = c("|", "-")) + 
+  theme_minimal() +
+  xlab("tSNE 1") +
+  ylab("tSNE 2") 
+ggsave("../../Results/EFDR5/Fig_S5/A.pdf", naive_active_tsne, width = 5, height = 4)
+```
+
+Differential mean expression testing.
+
+```{r}
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+OffSetCorrection1 <- function(MCMC1, MCMC2){
+  median(rowMedians(MCMC1@parameters$mu)/rowMedians(MCMC2@parameters$mu))
+}
+# To properly exclude genes, we need to account or the offset
+Offset <- OffSetCorrection(MCMC.CAST.naive, MCMC.CAST.active); Offset
+Offset1 <- OffSetCorrection1(MCMC.CAST.naive, MCMC.CAST.active); Offset1
+
+par(mfrow = c(1,3))
+boxplot(cbind(colMedians(MCMC.CAST.naive@parameters$mu),
+              colMedians(MCMC.CAST.active@parameters$mu)), 
+        log = "y", names = c("naive", "active"), frame = FALSE,
+        ylab = "Mean expression estimate", main = "Before offset (mean-based)")
+boxplot(cbind(colMedians(MCMC.CAST.naive@parameters$mu) / Offset,
+              colMedians(MCMC.CAST.active@parameters$mu)), 
+        log = "y", names = c("naive", "active"), frame = FALSE,
+        ylab = "Mean expression estimate", main = "After offset (mean-based)")
+boxplot(cbind(colMedians(MCMC.CAST.naive@parameters$mu) / Offset1,
+              colMedians(MCMC.CAST.active@parameters$mu)), 
+        log = "y", names = c("naive", "active"), frame = FALSE,
+        ylab = "Mean expression estimate", main = "After offset (median-based)")
+```
+
+For these data, we observe that a handful of genes with high expression in 
+active cells distored the offset calculation as it is based on the average of 
+mean expression parameters per cell group. As a more robust alternative, we 
+replace the offset calculation to use medians instead of sums. This change does 
+not alter the results for the other comparisons shown in this analysis.
+
+```{r}
+# Manual application of offset correction
+MCMC.CAST.naive1 <- MCMC.CAST.naive
+MCMC.CAST.naive1@parameters$mu <- MCMC.CAST.naive1@parameters$mu/Offset1
+MCMC.CAST.naive1@parameters$phi <- MCMC.CAST.naive1@parameters$phi * Offset1
+
+genes_select <- (colMedians(MCMC.CAST.naive@parameters$mu) > 1*Offset1 | 
+                   colMedians(MCMC.CAST.active@parameters$mu) > 1)
+
+Test_DE <- BASiCS_TestDE(Chain1 = MCMC.CAST.naive1, 
+                              Chain2 = MCMC.CAST.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              Offset = FALSE,
+                              GenesSelect = genes_select)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.CAST.naive1, 
+                              Chain2 = MCMC.CAST.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              Offset = FALSE,
+                              GenesSelect = genes_select)
+
+# For visualization
+cur_df <- data.frame(naive = Test_DE$TableMean$Mean1,
+                     active = Test_DE$TableMean$Mean2,
+                     testing = ifelse(Test_DE$TableMean$ResultDiffMean == "Naive+", "Naive",
+                                      ifelse(Test_DE$TableMean$ResultDiffMean == "Active+", "Active", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+Active_naive.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(naive + 1), log10(active + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Naive" = "dark blue",
+                                 "Active" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal()
+ggsave("../../Results/EFDR5/Fig_S5/B.pdf", width = 7, height = 5)
+
+# variability
+ind_nochange <- Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff"
+
+boxplot_variability <- ggplot(data.frame(Condition = factor(c(rep("Naive", sum(ind_nochange)),
+                                rep("Active", sum(ind_nochange))),
+                                levels = c("Naive", "Active")),
+                  values = c(log10(Test_DE.LFC0$TableDisp$Disp1[ind_nochange]),
+                             log10(Test_DE.LFC0$TableDisp$Disp2[ind_nochange])))) +
+  geom_boxplot(aes(Condition, values), outlier.shape = NA) + ylim(c(0,2.5)) + theme_minimal()
+ggsave("../../Results/EFDR5/Fig_S5/C.pdf", boxplot_variability, width = 2.5, height = 3)
+
+wilcox.test(log10(Test_DE.LFC0$TableDisp$Disp1[ind_nochange]),
+            log10(Test_DE.LFC0$TableDisp$Disp2[ind_nochange]))
+```
+
+Fraction of cells in which naive and active specific genes are expressed.
+
+First for the naive.
+
+```{r}
+# Naive genes
+cur_naive <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+naive_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Naive+"]
+cell_fraction.naive <- apply(cur_naive[naive_genes,], 1, function(n){sum(n > 0)/ncol(cur_naive)})
+median(cell_fraction.naive)
+# 0.1714
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S5/Di.pdf", width = 7, height = 4)
+hist(apply(cur_naive[naive_genes[sample(1:length(naive_genes), 400)],], 1, function(n){length(which(n > 0))/ncol(cur_naive)}), breaks = 30, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.naive))
+dev.off()
+```
+
+Now for the active
+
+```{r}
+# Active genes
+cur_active <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+active_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Active+"]
+cell_fraction.active <- apply(cur_active[active_genes,], 1, function(n){sum(n > 0)/ncol(cur_active)})
+median(cell_fraction.active)
+# 0.314
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S5/Dii.pdf", width = 7, height = 4)
+hist(apply(cur_active[active_genes[sample(1:length(active_genes), 400)],], 1, function(n){length(which(n > 0))/ncol(cur_active)}), breaks = 30, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.active))
+dev.off()
+
+wilcox.test(cell_fraction.naive, cell_fraction.active)
+```
+
+
+
+

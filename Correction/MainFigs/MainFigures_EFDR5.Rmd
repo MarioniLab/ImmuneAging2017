@@ -1,0 +1,1467 @@
+---
+title: "Comparisons for Science paper (5% EFDR)"
+author: "Nils Eling & Catalina Vallejos"
+date: "30/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this file, we reproduce the figures for Martinez-Jimenez *et al* (2017) after
+updating the input number of spike-in molecules to account for the total volume
+of ERCC mix that is added to each library. The MCMC chains that used below were 
+generated using the script provided in `Comparison_MCMC.md`. 
+
+Here a 5% EFDR is used when applying the differential expression test. 
+
+# Data loading and preparation
+
+## Gene symbols
+
+We use the `biomaRt` Bioconductor package to convert ensembl gene ids into the
+gene symbols that are displayed in our figures.
+
+```{r obtain-gene-symbols, message=FALSE}
+library(biomaRt)
+
+# Initialize mart
+ensembl <- useMart("ensembl")
+
+# Select dataset
+ensembl <- useDataset(dataset = "mmusculus_gene_ensembl", 
+                      mart = ensembl)
+
+# Select gene ID and gene name
+genenames <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                   mart = ensembl)
+rownames(genenames) <- genenames$ensembl_gene_id
+```
+
+## Expression data
+
+To extract the number of cells in which each gene is expressed, we also require 
+the raw counts and the metadata file that summarises the experimental design.
+This is obtained as follows.
+
+```{r, message=FALSE, results="hide"}
+website <- "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-4888/"
+file <- "E-MTAB-4888.processed.1.zip"
+destfile <- "raw_data.txt.zip"
+download.file(paste(website, file, sep = ""), 
+              destfile = destfile)
+  
+# Unzip file
+unzip("raw_data.txt.zip")
+file.remove("raw_data.txt.zip")
+
+# Read in raw data
+CD4.raw <- read.table("raw_data.txt", header = TRUE, sep = "\t")
+
+# Download metadata file
+file <- "E-MTAB-4888.additional.1.zip"
+destfile <- "metadata.txt.zip"
+download.file(paste(website, file, sep = ""), 
+              destfile = destfile)
+  
+# Unzip file
+unzip("metadata.txt.zip")
+file.remove("metadata.txt.zip")
+
+# Read in metadata file
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+
+# Save library identifier as rownames
+rownames(CD4.metadata) <- CD4.metadata$X
+```
+
+## BASiCS output
+
+We also load the output that was obtained from BASiCS: MCMC chains and
+normalised counts (see `Comparison_MCMC.md`).
+
+```{r BASiCSoutput, message = FALSE}
+library(BASiCS)
+MCMC.B6.naive <- BASiCS_LoadChain(RunName = "B6.naive", StoreDir = "MCMCs")
+MCMC.CAST.naive <- BASiCS_LoadChain(RunName = "CAST.naive", StoreDir = "MCMCs")
+norm.counts <- readRDS("Results/norm_counts.rds")
+```
+
+## Additional R library requirements
+
+Finally, we load additional R libraries that are required to recreate the 
+figures and tables below.
+
+```{r libraries}
+library(ggplot2)
+library(openxlsx)
+```
+
+# Figure 1
+
+## Differential testing
+
+As in the original publication, we exclude lowly expressed genes when applying
+the differential expression test:
+
+```{r ExcludeLowExp}
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.B6.naive, MCMC.CAST.naive)
+
+include <- (colMedians(MCMC.B6.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST.naive@parameters$mu) > 1)
+```
+
+Subsequently, the differential test between B6 and CAST naive cells is applied:
+
+```{r}
+Test_DE <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                         Chain2 = MCMC.CAST.naive,
+                         EpsilonM = 2,
+                         GroupLabel1 = "B6", 
+                         GroupLabel2 = "CAST", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+```
+
+Find genes that have mapping issues.
+
+```{r}
+MCMC.B6_mapped_B6 <- readRDS("MCMCs/chain_B6_mapped_B6.rds")
+MCMC.B6_mapped_CAST <- readRDS("MCMCs/chain_B6_mapped_CAST.rds")
+MCMC.CAST_mapped_CAST <- readRDS("MCMCs/chain_CAST_mapped_CAST.rds")
+MCMC.CAST_mapped_B6 <- readRDS("MCMCs/chain_CAST_mapped_B6.rds")
+
+# Test these chains
+Offset <- OffSetCorrection(MCMC.B6_mapped_B6, MCMC.B6_mapped_CAST)
+include <- (colMedians(MCMC.B6_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.B6 <- BASiCS_TestDE(Chain1 = MCMC.B6_mapped_B6, 
+                              Chain2 = MCMC.B6_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+Offset <- OffSetCorrection(MCMC.CAST_mapped_B6, MCMC.CAST_mapped_CAST)
+include <- (colMedians(MCMC.CAST_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.CAST <- BASiCS_TestDE(Chain1 = MCMC.CAST_mapped_B6, 
+                              Chain2 = MCMC.CAST_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+genes.mapping.issues <- unique(c(Test_DE.mapping.B6$TableMean$GeneName[
+  Test_DE.mapping.B6$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.B6$TableMean$ResultDiffMean != "NoDiff"],
+  Test_DE.mapping.CAST$TableMean$GeneName[
+  Test_DE.mapping.CAST$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.CAST$TableMean$ResultDiffMean != "NoDiff"]))
+```
+
+Regenerate Table 1.
+
+```{r}
+# B6 specific genes
+old_B6 <- read.xlsx("Results/aah4115_TableS1.xlsx", sheet = 1)
+old_B6$Log2FC <- log2(old_B6$`B6.Expression.[posterior.mean.expression]`/
+                        old_B6$`CAST.Expression.[posterior.mean.expression]`)
+old_B6$MeanOverall <- rowMeans(data.frame(B6 = old_B6$`B6.Expression.[posterior.mean.expression]`,
+                                          CAST = old_B6$`CAST.Expression.[posterior.mean.expression]`))
+
+# Total number of tested genes
+TestedGenes <- which(Test_DE$TableMean$ResultDiffMean != "ExcludedByUser")
+# Removing the overlap with genes that have mapping issues
+length(TestedGenes) - sum(Test_DE$TableMean$GeneName[TestedGenes] %in% genes.mapping.issues)
+
+# New B6 specific genes
+new_B6 <- Test_DE$TableMean[Test_DE$TableMean$ResultDiffMean == "B6+",]
+
+# Remove genes that could be detected due to mapping issues
+new_B6 <- new_B6[!(new_B6$GeneName %in% genes.mapping.issues),]
+new_B6 <- new_B6[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                    "MeanLog2FC", "ProbDiffMean")]
+new_B6$GeneSymbol <- genenames[new_B6$GeneName,2]
+new_B6 <- new_B6[,c("GeneSymbol", "GeneName", "Mean1", "Mean2", "MeanLog2FC", 
+                    "MeanOverall", "ProbDiffMean")]
+colnames(new_B6) <- c("GeneSymbol", "GeneName", 
+                      "B6.Expression", "CAST.Expression", 
+                      "MeanLog2FC", "MeanOverall", "ProbDiffMean")
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_B6$Gene.ID[!(old_B6$Gene.ID %in% new_B6$GeneName)]
+cur_genes <- cur_genes[!(cur_genes %in% genes.mapping.issues)]
+diff_1 <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_1 <- diff_1[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                    "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_1$GeneSymbol <- genenames[diff_1$GeneName,2]
+diff_1 <- diff_1[,c("GeneSymbol", "GeneName", "Mean1", "Mean2", "MeanLog2FC", 
+                    "MeanOverall", "ProbDiffMean", "ResultDiffMean")]
+colnames(diff_1) <- c("GeneSymbol", "GeneName", 
+                      "B6.Expression", "CAST.Expression", "MeanLog2FC", 
+                      "MeanOverall", "ProbDiffMean", "ResultDiffMean")
+
+# Note: most genes that were differentially expressed before but not now have 
+# posterior probability that is just below of threshold.
+par(mfrow = c(1,2))
+hist(diff_1$ProbDiffMean, xlab = "Tail posterior probabilities", main = "")
+abline(v = Test_DE$DiffMeanSummary$ProbThreshold, col = "red", lwd = 2)
+hist(diff_1$MeanLog2FC, xlab = "Log2-FC estimates", main = "")
+abline(v = 2, col = "red", lwd = 2)
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_B6$GeneName[!(new_B6$GeneName %in% old_B6$Gene.ID)]
+cur_genes <- cur_genes[!(cur_genes %in% genes.mapping.issues)]
+diff_2 <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_2 <- diff_2[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                    "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_2$GeneSymbol <- genenames[diff_2$GeneName,2]
+diff_2 <- diff_2[,c("GeneSymbol", "GeneName", "Mean1", "Mean2", "MeanLog2FC", 
+                    "MeanOverall", "ProbDiffMean", "ResultDiffMean")]
+colnames(diff_2) <- c("GeneSymbol", "GeneName", 
+                      "B6.Expression", "CAST.Expression", "MeanLog2FC", 
+                      "MeanOverall", "ProbDiffMean", "ResultDiffMean")
+
+# Old CAST genes
+old_CAST <- read.xlsx("Results/aah4115_TableS1.xlsx", sheet = 2)
+old_CAST$Log2FC <- log2(old_CAST$`B6.Expression.[posterior.mean.expression]`/
+                          old_CAST$`CAST.Expression.[posterior.mean.expression]`)
+old_CAST$MeanOverall <- rowMeans(data.frame(B6 = old_CAST$`B6.Expression.[posterior.mean.expression]`,
+                                          CAST = old_CAST$`CAST.Expression.[posterior.mean.expression]`))
+
+# New CAST specific genes
+new_CAST <- Test_DE$TableMean[Test_DE$TableMean$ResultDiffMean == "CAST+",]
+
+# Remove genes that could be detected due to mapping issues
+new_CAST <- new_CAST[!(new_CAST$GeneName %in% genes.mapping.issues),]
+new_CAST <- new_CAST[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                        "MeanLog2FC", "ProbDiffMean")]
+new_CAST$GeneSymbol <- genenames[new_CAST$GeneName,2]
+new_CAST <- new_CAST[,c("GeneSymbol", "GeneName", "Mean1", "Mean2", 
+                        "MeanLog2FC", "MeanOverall", "ProbDiffMean")]
+colnames(new_CAST) <- c("GeneSymbol", "GeneName", 
+                        "B6.Expression", "CAST.Expression", 
+                        "MeanLog2FC", "MeanOverall", "ProbDiffMean")
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_CAST$Gene.ID[!(old_CAST$Gene.ID %in% new_CAST$GeneName)]
+cur_genes <- cur_genes[!(cur_genes %in% genes.mapping.issues)]
+diff_1.CAST <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_1.CAST <- diff_1.CAST[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                              "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_1.CAST$GeneSymbol <- genenames[diff_1.CAST$GeneName,2]
+diff_1.CAST <- diff_1.CAST[,c("GeneSymbol", "GeneName", "Mean1", "Mean2",
+                              "MeanLog2FC", "MeanOverall",
+                              "ProbDiffMean", "ResultDiffMean")]
+colnames(diff_1.CAST) <- c("GeneSymbol", "GeneName", 
+                           "B6.Expression", "CAST.Expression", 
+                           "MeanLog2FC", "MeanOverall", 
+                           "ProbDiffMean", "ResultDiffMean")
+
+# Note: most genes that were differentially expressed before but not now have 
+# posterior probability that is just below of threshold.
+par(mfrow = c(1,2))
+hist(diff_1.CAST$ProbDiffMean, xlab = "Tail posterior probabilities", main = "")
+abline(v = Test_DE$DiffMeanSummary$ProbThreshold, col = "red", lwd = 2)
+hist(diff_1.CAST$MeanLog2FC, xlab = "Log2-FC estimates", main = "")
+abline(v = -2, col = "red", lwd = 2)
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_CAST$GeneName[!(new_CAST$GeneName %in% old_CAST$Gene.ID)]
+cur_genes <- cur_genes[!(cur_genes %in% genes.mapping.issues)]
+diff_2.CAST <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_2.CAST <- diff_2.CAST[,c("GeneName", "MeanOverall", "Mean1", "Mean2", 
+                              "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_2.CAST$GeneSymbol <- genenames[diff_2.CAST$GeneName,2]
+diff_2.CAST <- diff_2.CAST[,c("GeneSymbol", "GeneName", "Mean1", "Mean2", 
+                              "MeanLog2FC", "MeanOverall", 
+                              "ProbDiffMean","ResultDiffMean")]
+colnames(diff_2.CAST) <- c("GeneSymbol", "GeneName", 
+                           "B6.Expression", "CAST.Expression", "MeanLog2FC", 
+                           "MeanOverall", "ProbDiffMean", "ResultDiffMean")
+
+# Assemble Table
+cur_tab <- list()
+cur_tab$Old_B6_genes <- old_B6
+cur_tab$New_B6_genes <- new_B6
+cur_tab$Old_significant_B6 <- diff_1
+cur_tab$New_significant_B6 <- diff_2
+cur_tab$Old_CAST_genes <- old_CAST
+cur_tab$New_CAST_genes <- new_CAST
+cur_tab$Old_significant_CAST <- diff_1.CAST
+cur_tab$New_significant_CAST <- diff_2.CAST
+
+write.xlsx(cur_tab, "Results/EFDR5/S1_corrected.xlsx")
+```
+
+We next compute the corrected counts, the tSNE and visualize differentially expressed genes.
+
+```{r}
+B6_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(B6_cells) <- paste("B6", colnames(B6_cells), sep = "_") 
+
+CAST_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(CAST_cells) <- paste("CAST", colnames(CAST_cells), sep = "_") 
+
+cur_cells <- cbind(B6_cells, CAST_cells)
+
+# Compute tSNE
+library(Rtsne)
+set.seed(222)
+tsne <- Rtsne(t(log10(cur_cells + 1)), perplexity = 10)
+
+tsne.df <- data.frame(tsne.1 = tsne$Y[,1], tsne.2 = tsne$Y[,2], 
+                      species = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[1]}))
+
+# Plot tSNE
+B6_CAST_tsne <- ggplot(data = tsne.df, aes(tsne.1, tsne.2)) + 
+  geom_point(aes(fill = species), shape = 21) +
+  scale_fill_manual(values = c("black", "goldenrod")) + 
+  theme_minimal() +
+  xlab("tSNE 1") +
+  ylab("tSNE 2") 
+
+ggsave("Results/EFDR5/Fig_1B.pdf", B6_CAST_tsne, height = 4, width = 5)
+```
+
+Next, we will visualize the genes that change in mean expression.
+
+```{r}
+# B6 specific
+B6.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "B6+"]
+B6.genes <- B6.genes[!(B6.genes %in% genes.mapping.issues)]
+B6.genes.symbol <- genenames[B6.genes,2]
+
+# CAST specific
+CAST.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "CAST+"]
+CAST.genes <- CAST.genes[!(CAST.genes %in% genes.mapping.issues)]
+CAST.genes.symbol <- genenames[CAST.genes,2]
+
+# Subsample for visualization
+set.seed(1234)
+B6.genes.final <- B6.genes[sample(1:length(B6.genes), 30)]
+CAST.genes.final<- CAST.genes[sample(1:length(CAST.genes), 30)]
+B6.cells <- colnames(B6_cells)[sample(1:ncol(B6_cells), 30)]
+CAST.cells <- colnames(CAST_cells)[sample(1:ncol(CAST_cells), 30)]
+
+# Visualize in form of heatmap
+library(pheatmap)
+breaksList = seq(0, 3.5, length.out = 100)
+B6.genes.final <- B6.genes.final[order(rowMeans(cur_cells[B6.genes.final,B6.cells]),
+                                       decreasing = TRUE)]
+pdf("Results/EFDR5/Fig_1Ci.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[B6.genes.final,B6.cells] + 1), 
+         cluster_rows = FALSE, cluster_cols = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         border_color = NA, breaks = breaksList, show_rownames = FALSE,
+         show_colnames = FALSE, cellwidth = 3, cellheight = 3)
+dev.off()
+pdf("Results/EFDR5/Fig_1Cii.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[B6.genes.final,CAST.cells] + 1), 
+         cluster_rows = FALSE, cluster_cols = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         border_color = NA, breaks = breaksList,
+         show_rownames = FALSE,
+         show_colnames = FALSE, cellwidth = 3, cellheight = 3)
+dev.off()
+
+CAST.genes.final <- CAST.genes.final[order(rowMeans(cur_cells[CAST.genes.final,CAST.cells]),
+                                       decreasing = TRUE)]
+pdf("Results/EFDR5/Fig_1Ciii.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[CAST.genes.final,B6.cells] + 1), 
+         cluster_rows = FALSE, cluster_cols = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         border_color = NA, breaks = breaksList, show_rownames = FALSE,
+         show_colnames = FALSE, cellwidth = 3, cellheight = 3)
+dev.off()
+pdf("Results/EFDR5/Fig_1Civ.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[CAST.genes.final,CAST.cells] + 1), 
+         cluster_rows = FALSE, cluster_cols = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         border_color = NA, breaks = breaksList,
+         show_rownames = FALSE,
+         show_colnames = FALSE, cellwidth = 3, cellheight = 3)
+dev.off()
+```
+
+Next, we check how much the displayed genes change in mean expression.
+
+First for the B6 specific genes.
+
+```{r}
+genes_to_test.B6 <- c("Klf13", "Ets1", "Ly6e", "Rhoh", "Il21r", "Tmed7")
+genes_to_test.ID.B6 <- genenames[match(genes_to_test.B6, genenames$external_gene_name),1]
+
+Test_DE$TableMean[match(genes_to_test.ID.B6, Test_DE$TableMean$GeneName),]
+Test_DE$TableDisp[match(genes_to_test.ID.B6, Test_DE$TableDisp$GeneName),]
+```
+
+4 out of the 6 genes still show significant differential expression, while all the LFCs are larger than 2.
+
+```{r}
+genes_to_test.CAST <- c("Gm2a", "Serinc3", "Ctse", "Arl5a", "Mccc2", "Hdgfl3")
+genes_to_test.ID.CAST <- genenames[match(genes_to_test.CAST, genenames$external_gene_name),1]
+
+Test_DE$TableMean[match(genes_to_test.ID.CAST, Test_DE$TableMean$GeneName),]
+Test_DE$TableDisp[match(genes_to_test.ID.CAST, Test_DE$TableDisp$GeneName),]
+```
+
+5 out of the 6 genes still show significant differential expression, while all the LFCs are smaller than -2.
+
+We finally visualize the expression of these genes.
+
+```{r}
+library(caroline)
+library(sm)
+pdf("Results/EFDR5/Fig_1Di.pdf", width = 4, height = 7)
+violins(x = as.data.frame(log10(t(cur_cells[rev(c(genes_to_test.ID.B6, 
+                                                  genes_to_test.ID.CAST)),
+                                            grepl("B6", colnames(cur_cells))])+ 1)),
+        horizontal = TRUE, drawRect = FALSE, deciles = FALSE, connect = FALSE, ylim = c(0,4))
+dev.off()
+
+pdf("Results/EFDR5/Fig_1Dii.pdf", width = 4, height = 7)
+violins(x = as.data.frame(log10(t(cur_cells[rev(c(genes_to_test.ID.B6, 
+                                                  genes_to_test.ID.CAST)),
+                                            grepl("CAST", colnames(cur_cells))])+ 1)),
+        horizontal = TRUE, drawRect = FALSE, deciles = FALSE, connect = FALSE, ylim = c(0,4))
+dev.off()
+```
+
+**Figure 1 is fine!**
+
+## Figure 2
+
+Load in the chains.
+
+```{r}
+MCMC.B6.naive <- readRDS("MCMCs/chain_B6.naive.Rds")
+MCMC.B6.active <- readRDS("MCMCs/chain_B6.active.Rds")
+```
+
+Calculate tSNE on normalized counts
+
+```{r}
+naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(naive_cells) <- paste("Naive", colnames(naive_cells), sep = "_") 
+
+active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(active_cells) <- paste("Active", colnames(active_cells), sep = "_") 
+
+
+cur_cells <- cbind(naive_cells, active_cells)
+
+# Compute tSNE
+library(Rtsne)
+set.seed(1234)
+tsne <- Rtsne(t(log10(cur_cells + 1)), perplexity = 10)
+
+tsne.df <- data.frame(tsne.1 = tsne$Y[,1], tsne.2 = tsne$Y[,2], 
+                      activation = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[1]}))
+
+# Plot tSNE
+naive_active_tsne <- ggplot(data = tsne.df, aes(tsne.1, tsne.2)) + 
+  geom_point(aes(shape = activation), size = 4) +
+  scale_shape_manual(values = c("|", "-")) + 
+  theme_minimal() +
+  ylab("tSNE 1") +
+  xlab("tSNE 2") 
+ggsave("Results/EFDR5/Fig_2A.pdf", naive_active_tsne, width = 5, height = 4)
+```
+
+Differential mean expression testing.
+
+```{r}
+library(ggplot2)
+# To proberly exclude genes, we need to account or the offset
+Offset <- OffSetCorrection(MCMC.B6.naive, MCMC.B6.active)
+genes_select <- (colMedians(MCMC.B6.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6.active@parameters$mu) > 1)
+
+Test_DE <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = genes_select)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = genes_select)
+
+# For visualization
+cur_df <- data.frame(naive = Test_DE$TableMean$Mean1,
+                     active = Test_DE$TableMean$Mean2,
+                     testing = ifelse(Test_DE$TableMean$ResultDiffMean == "Naive+", "Naive",
+                                      ifelse(Test_DE$TableMean$ResultDiffMean == "Active+", "Active", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+Active_naive.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(naive + 1), log10(active + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Naive" = "dark blue",
+                                 "Active" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal()
+ggsave("Results/EFDR5/Fig_2B.pdf", width = 7, height = 5)
+```
+
+Regrenerate Table S2.
+
+```{r}
+# Old down-regulated genes
+old_down <- read.xlsx("Results/aah4115_TableS2.xlsx", sheet = 1)
+old_down <- old_down[,c("X1", "GeneNames", "ExpOverall", "ExpLogFC", "ProbDiffExp")]
+
+# New down-regulated genes
+new_down <- Test_DE$TableMean[Test_DE$TableMean$ResultDiffMean == "Naive+",]
+new_down <- new_down[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean")]
+new_down <- new_down[order(new_down$MeanLog2FC, decreasing = TRUE),]
+new_down$MeanLog2FC <- -new_down$MeanLog2FC
+new_down$GeneSymbol <- genenames[new_down$GeneName,2]
+new_down <- new_down[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean")]
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_down$GeneNames[!(old_down$GeneNames %in% new_down$GeneName)]
+diff_1 <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_1 <- diff_1[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_1 <- diff_1[order(diff_1$MeanLog2FC, decreasing = TRUE),]
+diff_1$MeanLog2FC <- -diff_1$MeanLog2FC
+diff_1$GeneSymbol <- genenames[diff_1$GeneName,2]
+diff_1 <- diff_1[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_down$GeneName[!(new_down$GeneName %in% old_down$GeneNames)]
+diff_2 <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_2 <- diff_2[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_2 <- diff_2[order(diff_2$MeanLog2FC, decreasing = TRUE),]
+diff_2$MeanLog2FC <- -diff_2$MeanLog2FC
+diff_2$GeneSymbol <- genenames[diff_2$GeneName,2]
+diff_2 <- diff_2[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+
+# Old up-regulated genes
+old_up <- read.xlsx("Results/aah4115_TableS2.xlsx", sheet = 2)
+old_up <- old_up[,c("X1", "GeneNames", "ExpOverall", "ExpLogFC", "ProbDiffExp")]
+
+# New up-regulated genes
+new_up <- Test_DE$TableMean[Test_DE$TableMean$ResultDiffMean == "Active+",]
+new_up <- new_up[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean")]
+new_up <- new_up[order(new_up$MeanLog2FC, decreasing = FALSE),]
+new_up$MeanLog2FC <- -new_up$MeanLog2FC
+new_up$GeneSymbol <- genenames[new_up$GeneName,2]
+new_up <- new_up[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean")]
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_up$GeneNames[!(old_up$GeneNames %in% new_up$GeneName)]
+diff_1.up <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_1.up <- diff_1.up[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_1.up <- diff_1.up[order(diff_1.up$MeanLog2FC, decreasing = FALSE),]
+diff_1.up$MeanLog2FC <- -diff_1.up$MeanLog2FC
+diff_1.up$GeneSymbol <- genenames[diff_1.up$GeneName,2]
+diff_1.up <- diff_1.up[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_up$GeneName[!(new_up$GeneName %in% old_up$GeneNames)]
+diff_2.up <- Test_DE$TableMean[match(cur_genes, Test_DE$TableMean$GeneName),]
+diff_2.up <- diff_2.up[,c("GeneName", "MeanOverall", "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+diff_2.up <- diff_2.up[order(diff_2.up$MeanLog2FC, decreasing = FALSE),]
+diff_2.up$MeanLog2FC <- -diff_2.up$MeanLog2FC
+diff_2.up$GeneSymbol <- genenames[diff_2.up$GeneName,2]
+diff_2.up <- diff_2.up[,c("GeneSymbol", "GeneName", "MeanOverall", 
+                        "MeanLog2FC", "ProbDiffMean", "ResultDiffMean")]
+
+# Assemble Table
+cur_tab <- list()
+cur_tab$Old_down_regulated_genes <- old_down
+cur_tab$New_down_regulated_genes <- new_down
+cur_tab$Old_significant_down <- diff_1
+cur_tab$New_significant_down <- diff_2
+cur_tab$Old_up_regulated_genes <- old_up
+cur_tab$New_up_regulated_genes <- new_up
+cur_tab$Old_significant_up <- diff_1.up
+cur_tab$New_significant_up <- diff_2.up
+
+write.xlsx(cur_tab, "Results/EFDR5/S2_corrected.xlsx")
+```
+
+The threshold to exclude lowly expressed genes is now mu < 1 while it was mu < 50 before.
+
+Differential over-dispersion testing.
+
+```{r}
+ind_nochange <- Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff"
+
+boxplot_variability <- ggplot(data.frame(Condition = factor(c(rep("Naive", sum(ind_nochange)),
+                                rep("Active", sum(ind_nochange))),
+                                levels = c("Naive", "Active")),
+                  values = c(log10(Test_DE.LFC0$TableDisp$Disp1[ind_nochange]),
+                             log10(Test_DE.LFC0$TableDisp$Disp2[ind_nochange])))) +
+  geom_boxplot(aes(Condition, values), outlier.shape = NA) + ylim(c(0,2.5)) + theme_minimal()
+ggsave("Results/EFDR5/Fig_2C.pdf", boxplot_variability, width = 2.5, height = 3)
+
+wilcox.test(log10(Test_DE.LFC0$TableDisp$Disp1[ind_nochange]),
+            log10(Test_DE.LFC0$TableDisp$Disp2[ind_nochange]))
+```
+
+Fraction of cells in which naive and active specific genes are expressed.
+
+First for the naive.
+
+```{r}
+# Naive genes
+cur_naive <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+naive_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Naive+"]
+cell_fraction <- apply(cur_naive[naive_genes,], 1, function(n){sum(n > 0)/ncol(cur_naive)})
+median(cell_fraction)
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_2Dii.pdf", width = 7, height = 4)
+hist(apply(cur_naive[naive_genes[sample(1:length(naive_genes), 400)],], 1, function(n){length(which(n > 0))/ncol(cur_naive)}), breaks = 50, xlim = c(0,1),ylim = c(0,50))
+abline(v = median(cell_fraction))
+dev.off()
+```
+
+Now for the active
+
+```{r}
+# Active genes
+cur_active <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+active_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Active+"]
+cell_fraction <- apply(cur_active[active_genes,], 1, function(n){sum(n > 0)/ncol(cur_active)})
+median(cell_fraction)
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_2Di.pdf", width = 7, height = 4)
+hist(apply(cur_active[active_genes[sample(1:length(active_genes), 300)],], 1, function(n){length(which(n > 0))/ncol(cur_active)}), breaks = 50, xlim = c(0,1),ylim = c(0,50))
+abline(v = median(cell_fraction))
+dev.off()
+```
+
+The median for the fraction of cells in which naive-specific genes are expressed is nearly the same as in the Science paper.
+The median for the fraction of cells in which active-specific genes are expressed is larger than the one in the Science paper.
+So in general, the message is the same. 
+
+Validation of individual genes.
+
+```{r}
+# Il2ra
+gene <- genenames[genenames$external_gene_name == "Il2ra",1]
+Test_DE$TableMean[Test_DE$TableMean$GeneName == gene,]
+
+# Eif1
+gene <- genenames[genenames$external_gene_name == "Eif1",1]
+Test_DE.LFC0$TableMean[Test_DE$TableMean$GeneName == gene,]
+Test_DE.LFC0$TableDisp[Test_DE$TableDisp$GeneName == gene,]
+
+# Sell
+gene <- genenames[genenames$external_gene_name == "Sell",1]
+Test_DE$TableMean[Test_DE$TableMean$GeneName == gene,]
+```
+
+These genes are perfectly validated.
+
+Now, we will visualize these genes.
+
+```{r}
+library(reshape2)
+cells.naive <- colnames(cur_cells)[grepl("Naive", colnames(cur_cells))]
+cells.active <- colnames(cur_cells)[grepl("Active", colnames(cur_cells))]
+
+# Il2ra
+gene <- genenames[genenames$external_gene_name == "Il2ra",1]
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_2Ei.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.naive[sample(1:length(cells.naive), 50)]] + 1)), ylim = c(0,4))
+dev.off()
+pdf("Results/EFDR5/Fig_2Eii.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.active[sample(1:length(cells.active), 50)]] + 1)), ylim = c(0,4))
+abline(h = log10(Test_DE$TableMean$Mean2[Test_DE$TableMean$GeneName == gene] + 1))
+dev.off()
+
+# Eif1
+gene <- genenames[genenames$external_gene_name == "Eif1",1]
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_2Fi.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.naive[sample(1:length(cells.naive), 50)]] + 1)), ylim = c(0,4))
+abline(h = log10(Test_DE$TableMean$Mean1[Test_DE$TableMean$GeneName == gene] + 1))
+dev.off()
+pdf("Results/EFDR5/Fig_2Fii.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.active[sample(1:length(cells.active), 50)]] + 1)), ylim = c(0,4))
+abline(h = log10(Test_DE$TableMean$Mean2[Test_DE$TableMean$GeneName == gene] + 1))
+dev.off()
+
+# Sell
+gene <- genenames[genenames$external_gene_name == "Sell",1]
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_2Gi.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.naive[sample(1:length(cells.naive), 50)]] + 1)), ylim = c(0,4))
+abline(h = log10(Test_DE$TableMean$Mean1[Test_DE$TableMean$GeneName == gene] + 1))
+dev.off()
+pdf("Results/EFDR5/Fig_2Gii.pdf", width = 5, height = 3)
+barplot(as.numeric(log10(cur_cells[gene,cells.active[sample(1:length(cells.active), 50)]] + 1)), ylim = c(0,4))
+abline(h = log10(Test_DE$TableMean$Mean2[Test_DE$TableMean$GeneName == gene] + 1))
+dev.off()
+```
+
+**Figure 2 is correct!**
+
+## Figure 3
+
+Load in the chains.
+
+```{r}
+MCMC.B6.naive <- readRDS("MCMCs/chain_B6.naive.Rds")
+MCMC.B6.active <- readRDS("MCMCs/chain_B6.active.Rds")
+MCMC.CAST.naive <- readRDS("MCMCs/chain_CAST.naive.Rds")
+MCMC.CAST.active <- readRDS("MCMCs/chain_CAST.active.Rds")
+```
+
+Differential testing.
+
+```{r}
+Offset <- OffSetCorrection(MCMC.B6.naive, MCMC.B6.active)
+genes_select <- (colMedians(MCMC.B6.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6.active@parameters$mu) > 1)
+
+Test_DE.B6 <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = genes_select)
+
+Offset <- OffSetCorrection(MCMC.CAST.naive, MCMC.CAST.active)
+genes_select <- (colMedians(MCMC.CAST.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST.active@parameters$mu) > 1)
+
+Test_DE.CAST <- BASiCS_TestDE(Chain1 = MCMC.CAST.naive, 
+                              Chain2 = MCMC.CAST.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", EFDR_M = 0.05,
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = genes_select)
+
+# Select only the genes that are upregulated either in B6 or CAST
+genes_select <- Test_DE.B6$TableMean$ResultDiffMean == "Active+" |
+  Test_DE.CAST$TableMean$ResultDiffMean == "Active+"
+
+Test_DE.Active <- BASiCS_TestDE(Chain1 = MCMC.B6.active, 
+                              Chain2 = MCMC.CAST.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = genes_select)
+```
+
+Also identify those genes that might have mapping issues.
+
+```{r}
+MCMC.B6_mapped_B6 <- readRDS("MCMCs/chain_B6_mapped_B6_active.rds")
+MCMC.B6_mapped_CAST <- readRDS("MCMCs/chain_B6_mapped_CAST_active.rds")
+MCMC.CAST_mapped_CAST <- readRDS("MCMCs/chain_CAST_mapped_CAST_active.rds")
+MCMC.CAST_mapped_B6 <- readRDS("MCMCs/chain_CAST_mapped_B6_active.rds")
+
+# Test these chains
+Offset <- OffSetCorrection(MCMC.B6_mapped_B6, MCMC.B6_mapped_CAST)
+include <- (colMedians(MCMC.B6_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.B6 <- BASiCS_TestDE(Chain1 = MCMC.B6_mapped_B6, 
+                              Chain2 = MCMC.B6_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+Offset <- OffSetCorrection(MCMC.CAST_mapped_B6, MCMC.CAST_mapped_CAST)
+include <- (colMedians(MCMC.CAST_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.CAST <- BASiCS_TestDE(Chain1 = MCMC.CAST_mapped_B6, 
+                              Chain2 = MCMC.CAST_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+genes.mapping.issues <- unique(c(Test_DE.mapping.B6$TableMean$GeneName[
+  Test_DE.mapping.B6$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.B6$TableMean$ResultDiffMean != "NoDiff"],
+  Test_DE.mapping.CAST$TableMean$GeneName[
+  Test_DE.mapping.CAST$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.CAST$TableMean$ResultDiffMean != "NoDiff"]))
+```
+
+First, we will find the shared activation genes.
+
+```{r}
+ind_shared <- Test_DE.B6$TableMean$ResultDiffMean == "Active+" &
+  Test_DE.CAST$TableMean$ResultDiffMean == "Active+" &
+  Test_DE.Active$TableMean$ResultDiffMean == "NoDiff"
+sum(ind_shared)
+genenames[Test_DE.B6$TableMean$GeneName[ind_shared],2]
+
+# Total number of DE across both species 
+sum(Test_DE.B6$TableMean$ResultDiffMean == "Active+" |
+    Test_DE.CAST$TableMean$ResultDiffMean == "Active+")
+# 784
+```
+
+We had 225 shared immune response genes in the Science paper. 
+Now we have 138.
+
+For full reproducibility, we also save these genes for testing with DAVID.
+
+```{r}
+write.table(Test_DE.B6$TableMean$GeneName[ind_shared],
+            "Results/EFDR5/shared_genes.txt", sep = "\t", 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+write.table(Test_DE.B6$TableMean$GeneName,
+            "Results/EFDR5/background.txt", sep = "\t", 
+            row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+Test enrichment for B6-specific genes.
+
+```{r}
+ind_B6 <- Test_DE.B6$TableMean$ResultDiffMean == "Active+" &
+  Test_DE.Active$TableMean$ResultDiffMean == "B6+" & 
+  !(Test_DE.Active$TableMean$GeneName %in% genes.mapping.issues)
+sum(ind_B6)
+genenames[Test_DE.B6$TableMean$GeneName[ind_B6],2]
+write.table(Test_DE.B6$TableMean$GeneName[ind_B6],
+            "Results/EFDR5/B6_specific.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+```
+
+Test enrichment for CAST-specific genes.
+
+```{r}
+ind_CAST <- Test_DE.CAST$TableMean$ResultDiffMean == "Active+" &
+  Test_DE.Active$TableMean$ResultDiffMean == "CAST+"  & 
+  !(Test_DE.Active$TableMean$GeneName %in% genes.mapping.issues)
+sum(ind_CAST)
+genenames[Test_DE.B6$TableMean$GeneName[ind_CAST],2]
+write.table(Test_DE.B6$TableMean$GeneName[ind_CAST],
+            "Results/EFDR5/CAST_specific.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+```
+
+Here, we visualize the enrichment as presented in Figure 3.
+I will use the results from DAVID. 
+However, DAVID is constantly updated and annotations and enrichments can change.
+
+```{r}
+# shared specific
+cur_dat <- data.frame(names = factor(c("ribosome biogenesis", "immune response",
+                                "rRNA processing", "inflammatory response",
+                                "corticotropin-releasing hormone stimulus",
+                                "response to lipopolysaccharide"),
+                                levels = c("ribosome biogenesis", "immune response",
+                                "rRNA processing", "inflammatory response",
+                                "corticotropin-releasing hormone stimulus",
+                                "response to lipopolysaccharide")),
+                      adj.p.value = c(0.0008, 0.0016, 0.049, 0.046, 0.097, 0.13))
+
+shared_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,3.5)) 
+ggsave("Results/EFDR5/Fig_3Ci.pdf", shared_enrichment, width = 3, height = 4)
+
+# B6 specific
+cur_dat <- data.frame(names = factor(c("IMP biosynthetic process",
+                              "ribonucleoside monophosphate biosynthetic process"),
+                                levels = c("IMP biosynthetic process",
+                              "ribonucleoside monophosphate biosynthetic process")),
+                      adj.p.value = c(0.99, 0.99))
+
+B6_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,3.5))
+ggsave("Results/EFDR5/Fig_3Cii.pdf", B6_enrichment, width = 3, height = 4)
+
+# CAST specific
+cur_dat <- data.frame(names = factor(c("defense response to protozoan",
+                              "cellular response to interferon-beta"),
+                                levels = c("defense response to protozoan",
+                              "cellular response to interferon-beta")),
+                      adj.p.value = c(0.94, 0.81))
+
+CAST_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,3.5))
+ggsave("Results/EFDR5/Fig_3Ciii.pdf", CAST_enrichment, width = 3, height = 4)
+```
+
+Recreate Table S3.
+
+```{r}
+old_shared <- read.xlsx("Results/aah4115_TableS3.xlsx", sheet = 1)
+
+# New B6 specific genes
+new_shared <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[ind_shared],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[ind_shared],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[ind_shared],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[ind_shared],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[ind_shared],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[ind_shared],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[ind_shared],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[ind_shared])
+new_shared <- new_shared[order(rowMeans(new_shared[,c(3,4,5,6)]), decreasing = TRUE),]
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_shared$Gene.ID[!(old_shared$Gene.ID %in% new_shared$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_1_shared <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind])
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_shared$Gene.ID[!(new_shared$Gene.ID %in% old_shared$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_2_shared <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind])
+
+old_B6 <- read.xlsx("Results/aah4115_TableS3.xlsx", sheet = 2)
+
+# New B6 specific genes
+new_B6 <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[ind_B6],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[ind_B6],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[ind_B6],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[ind_B6],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[ind_B6],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[ind_B6],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[ind_B6],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[ind_B6],
+                         Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[ind_B6])
+new_B6 <- new_B6[order(rowMeans(new_B6[,c(3,4,5,6)]), decreasing = TRUE),]
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_B6$Gene.ID[!(old_B6$Gene.ID %in% new_B6$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_1_B6 <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind],
+                         Prob.B6_vs_CAST = Test_DE.Active$TableMean$ProbDiffMean[cur_ind])
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_B6$Gene.ID[!(new_B6$Gene.ID %in% old_B6$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_2_B6 <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                        Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind],
+                        Prob.B6_vs_CAST = Test_DE.Active$TableMean$ProbDiffMean[cur_ind])
+
+old_CAST <- read.xlsx("Results/aah4115_TableS3.xlsx", sheet = 3)
+
+# New B6 specific genes
+new_CAST <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[ind_CAST],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[ind_CAST],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[ind_CAST],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[ind_CAST],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[ind_CAST],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[ind_CAST],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[ind_CAST],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[ind_CAST],
+                         Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[ind_CAST])
+new_CAST <- new_CAST[order(rowMeans(new_B6[,c(3,4,5,6)]), decreasing = TRUE),]
+
+# Genes that were previously detected as DE but not now
+cur_genes <- old_CAST$Gene.ID[!(old_CAST$Gene.ID %in% new_CAST$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_1_CAST <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind],
+                         Prob.B6_vs_CAST = Test_DE.Active$TableMean$ProbDiffMean[cur_ind])
+
+# Genes that are now detected to be DE but previously weren't
+cur_genes <- new_CAST$Gene.ID[!(new_CAST$Gene.ID %in% old_CAST$Gene.ID)]
+cur_ind <- match(cur_genes, Test_DE.B6$TableMean$GeneName)
+diff_2_CAST <- data.frame(Gene.name = genenames[Test_DE.B6$TableMean$GeneName[cur_ind],2],
+                         Gene.ID = Test_DE.B6$TableMean$GeneName[cur_ind],
+                         Naive.B6.expression = Test_DE.B6$TableMean$Mean1[cur_ind],
+                         Naive.CAST.expression = Test_DE.CAST$TableMean$Mean1[cur_ind],
+                         Active.B6.expression = Test_DE.B6$TableMean$Mean2[cur_ind],
+                         Active.CAST.expression = Test_DE.CAST$TableMean$Mean2[cur_ind],
+                         Log2FC.B6 = -Test_DE.B6$TableMean$MeanLog2FC[cur_ind],
+                         Log2FC.CAST = -Test_DE.CAST$TableMean$MeanLog2FC[cur_ind],
+                        Log2FC.B6_vs_CAST = Test_DE.Active$TableMean$MeanLog2FC[cur_ind],
+                         Prob.B6 = Test_DE.B6$TableMean$ProbDiffMean[cur_ind],
+                         Prob.CAST = Test_DE.CAST$TableMean$ProbDiffMean[cur_ind],
+                        Prob.B6_vs_CAST = Test_DE.Active$TableMean$ProbDiffMean[cur_ind])
+
+
+# Assemble the table
+cur_tab <- list()
+cur_tab$Old_shared_genes <- old_shared
+cur_tab$New_shared_genes <- new_shared
+cur_tab$Old_significant_shared <- diff_1_shared
+cur_tab$New_significant_shared <- diff_2_shared
+cur_tab$Old_B6_genes <- old_B6
+cur_tab$New_B6_genes <- new_B6
+cur_tab$Old_significant_B6 <- diff_1_B6
+cur_tab$New_significant_B6 <- diff_2_B6
+cur_tab$Old_CAST_genes <- old_CAST
+cur_tab$New_CAST_genes <- new_CAST
+cur_tab$Old_significant_CAST <- diff_1_CAST
+cur_tab$New_significant_CAST <- diff_2_CAST
+
+write.xlsx(cur_tab, "Results/EFDR5/S3_corrected.xlsx")
+```
+
+Visualize the number of cells that express the shared and species-specific immune genes.
+
+```{r}
+cur_cells.all.active <- CD4.raw[Test_DE.B6$TableMean$GeneName[ind_shared],
+                                CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2" | 
+                        CD4.metadata$Individuals == "CAST young 1" |
+                        CD4.metadata$Individuals == "CAST young 2")]
+cur_cells.B6.active <- CD4.raw[Test_DE.B6$TableMean$GeneName[ind_B6],
+                               CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+cur_cells.CAST.active <- CD4.raw[Test_DE.B6$TableMean$GeneName[ind_CAST],
+                                 CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_3Di.pdf", width = 7, height = 4)
+hist(apply(cur_cells.all.active[sample(1:nrow(cur_cells.all.active), 35),], 1, function(n){length(which(n > 0))/ncol(cur_cells.all.active)}), breaks = 20, xlim = c(0,1), ylim = c(0,15))
+abline(v = median(apply(cur_cells.all.active, 1, function(n){length(which(n > 0))/ncol(cur_cells.all.active)})))
+dev.off()
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_3Dii.pdf", width = 7, height = 4)
+hist(apply(cur_cells.B6.active[sample(1:nrow(cur_cells.B6.active), 35),], 1, function(n){length(which(n > 0))/ncol(cur_cells.B6.active)}), breaks = 20, xlim = c(0,1), ylim = c(0,15))
+abline(v = median(apply(cur_cells.B6.active, 1, function(n){length(which(n > 0))/ncol(cur_cells.B6.active)})))
+dev.off()
+
+set.seed(12345)
+pdf("Results/EFDR5/Fig_3Diii.pdf", width = 7, height = 4)
+hist(apply(cur_cells.CAST.active[sample(1:nrow(cur_cells.CAST.active), 35),], 1, function(n){length(which(n > 0))/ncol(cur_cells.CAST.active)}), breaks = 20, xlim = c(0,1), ylim = c(0,15))
+abline(v = median(apply(cur_cells.CAST.active, 1, function(n){length(which(n > 0))/ncol(cur_cells.CAST.active)})))
+dev.off()
+```
+
+We finally visualize the response genes and plot the tSNE.
+
+```{r}
+B6_naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(B6_naive_cells) <- paste("Naive_B6", colnames(B6_naive_cells), sep = "_") 
+
+B6_active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(B6_active_cells) <- paste("Active_B6", colnames(B6_active_cells), sep = "_") 
+
+CAST_naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(CAST_naive_cells) <- paste("Naive_CAST", colnames(CAST_naive_cells), sep = "_") 
+
+CAST_active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(CAST_active_cells) <- paste("Active_CAST", colnames(CAST_active_cells), sep = "_") 
+
+cur_cells <- cbind(B6_naive_cells, B6_active_cells, 
+                   CAST_naive_cells, CAST_active_cells)
+
+# Subsample for visualization
+set.seed(12345)
+# Cells
+cells_B6.naive <- colnames(cur_cells)[grepl("Naive_B6", colnames(cur_cells))]
+cells_B6.naive <- cells_B6.naive[sample(1:length(cells_B6.naive), 30)]
+cells_B6.active <- colnames(cur_cells)[grepl("Active_B6", colnames(cur_cells))]
+cells_B6.active <- cells_B6.active[sample(1:length(cells_B6.active), 30)]
+cells_CAST.naive <- colnames(cur_cells)[grepl("Naive_CAST", colnames(cur_cells))]
+cells_CAST.naive <- cells_CAST.naive[sample(1:length(cells_CAST.naive), 30)]
+cells_CAST.active <- colnames(cur_cells)[grepl("Active_CAST", colnames(cur_cells))]
+cells_CAST.active <- cells_CAST.active[sample(1:length(cells_CAST.active), 30)]
+
+# Genes
+genes.shared <- genenames[Test_DE.B6$TableMean$GeneName[ind_shared],1]
+genes.shared <- genes.shared[sample(1:length(genes.shared), 100)]
+genes.shared <- genes.shared[order(rowMeans(cur_cells[genes.shared,]), 
+                                   decreasing = TRUE)]
+#B6.specific <- genenames[Test_DE.B6$TableMean$GeneName[ind_B6],1]
+B6.specific <- Test_DE.B6$TableMean$GeneName[ind_B6]
+B6.specific <- B6.specific[sample(1:length(B6.specific), 27)]
+B6.specific <- B6.specific[order(rowMeans(cur_cells[B6.specific,]), decreasing = TRUE)]
+#CAST.specific <- genenames[Test_DE.B6$TableMean$GeneName[ind_CAST],1]
+CAST.specific <- Test_DE.B6$TableMean$GeneName[ind_CAST]
+CAST.specific <- CAST.specific[sample(1:length(CAST.specific), 43)]
+CAST.specific <- CAST.specific[order(rowMeans(cur_cells[CAST.specific,]), decreasing = TRUE)]
+
+# Visualize heatmap
+pdf("Results/EFDR5/Fig_3B.pdf", height = 12, width = 7)
+pheatmap(log10(cur_cells[c(genes.shared, B6.specific, CAST.specific),
+                         c(cells_B6.naive, cells_CAST.naive,
+                           cells_B6.active, cells_CAST.active)] + 1),
+         cluster_rows = FALSE, cluster_cols = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100), 
+         border_color = NA, show_rownames = FALSE,
+         show_colnames = FALSE, gaps_row = c(100,127), gaps_col = c(30,60,90))
+dev.off()
+```
+
+Now, we plot the tSNE.
+
+```{r}
+set.seed(1234)
+tsne <- Rtsne(t(log10(cur_cells + 1)), perplexity = 30)
+
+tsne.df <- data.frame(tsne.1 = tsne$Y[,1], tsne.2 = tsne$Y[,2], 
+                      activation = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[1]}),
+                      species = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[2]}))
+
+# Plot tSNE
+B6_CAST_naive_active <- ggplot(data = tsne.df, aes(tsne.1, tsne.2)) + 
+  geom_point(aes(colour = species, shape = activation), size = 4) + 
+  scale_color_manual(values = c("black", "goldenrod")) +
+  scale_shape_manual(values = c("|", "-")) +
+  theme_minimal() +
+  ylab("tSNE 1") +
+  xlab("tSNE 2") 
+ggsave("Results/EFDR5/Fig_3A.pdf", B6_CAST_naive_active, height = 4, width = 5)
+```
+
+**Figure 3 is correct!**
+
+## Figure 4
+
+Load chains
+
+```{r}
+MCMC.B6.active <- readRDS("MCMCs/chain_B6.active.Rds")
+MCMC.CAST.active <- readRDS("MCMCs/chain_CAST.active.Rds")
+MCMC.B6.active.old <- readRDS("MCMCs/chain_B6.active.old.Rds")
+MCMC.CAST.active.old <- readRDS("MCMCs/chain_CAST.active.old.Rds")
+```
+
+Differential testing
+
+```{r}
+# Here we select only the shared immune response genes for thesting
+Test_DE.LFC0.B6 <- BASiCS_TestDE(Chain1 = MCMC.B6.active.old, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+
+Test_DE.LFC0.CAST <- BASiCS_TestDE(Chain1 = MCMC.CAST.active.old, 
+                              Chain2 = MCMC.CAST.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05,
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+Visualize shared immune response genes.
+
+First mean expression for B6.
+
+```{r}
+shared.genes.ID <-Test_DE.B6$TableMean$GeneName[ind_shared]
+
+cur_table <- Test_DE.LFC0.B6$TableMean[match(shared.genes.ID, Test_DE.LFC0.B6$TableMean$GeneName),]
+
+DE_old_B6 <- ggplot(data.frame(Mean = log10(cur_table$MeanOverall),
+                  LFC.mean = cur_table$MeanLog2FC)) +
+  geom_point(aes(Mean, LFC.mean)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-6,6)) + theme_minimal()
+
+ggsave("Results/EFDR5/Fig_4Ai.pdf", DE_old_B6, width = 5, height = 4)
+
+sum(cur_table$MeanLog2FC >= 0)/nrow(cur_table)
+sum(cur_table$MeanLog2FC < 0)/nrow(cur_table)
+```
+
+That's as in Figure 4A.
+
+Now the over-dispersion for B6.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0.B6$TableDisp[match(shared.genes.ID, Test_DE.LFC0.B6$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0.B6$TableMean[match(shared.genes.ID, Test_DE.LFC0.B6$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_old_B6 <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-2,2))
+
+ggsave("Results/EFDR5/Fig_4Bi.pdf", DV_old_B6, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+```
+
+That's as in Figure 4A.
+
+Now mean expression for CAST
+
+```{r}
+shared.genes.ID <-Test_DE.B6$TableMean$GeneName[ind_shared]
+
+cur_table <- Test_DE.LFC0.CAST$TableMean[match(shared.genes.ID, Test_DE.LFC0.CAST$TableMean$GeneName),]
+
+DE_old_CAST <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.mean = cur_table$MeanLog2FC)) +
+  geom_point(aes(Mean, LFC.mean)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-6,6)) + theme_minimal()
+
+ggsave("Results/EFDR5/Fig_4Aii.pdf", DE_old_CAST, width = 5, height = 4)
+
+sum(cur_table$MeanLog2FC >= 0)/nrow(cur_table)
+sum(cur_table$MeanLog2FC < 0)/nrow(cur_table)
+```
+
+Now the over-dispersion for CAST.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0.CAST$TableDisp[match(shared.genes.ID, Test_DE.LFC0.CAST$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0.CAST$TableMean[match(shared.genes.ID, Test_DE.LFC0.CAST$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_old_CAST <-ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-2,2))
+
+ggsave("Results/EFDR5/Fig_4Bii.pdf", DV_old_CAST, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+```
+
+The trend for the CAST got even a bit better.
+
+This confirms the correctness of Figure 4A and 4B.
+
+Finally, we visualize the change in the fraction of cells that express these shared immune genes between the young and old mice.
+
+First for B6.
+
+```{r}
+# Young condition
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2"),]
+cell_fraction.young <- apply(cur_young[shared.genes.ID,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+median(cell_fraction.young)
+
+density.B6_young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) + geom_vline(xintercept = median(cell_fraction.young)) + 
+  theme_minimal()
+ggsave("Results/EFDR5/Fig_4Ci.pdf", density.B6_young, width = 5, height = 2)
+
+# Old condition
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 old 1" | 
+                          CD4.metadata$Individuals == "B6 old 2"),]
+cell_fraction.old <- apply(cur_old[shared.genes.ID,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+median(cell_fraction.old)
+
+density.B6_old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) + geom_vline(xintercept = median(cell_fraction.old))
+ggsave("Results/EFDR5/Fig_4Ciii.pdf", density.B6_old, width = 5, height = 2)
+
+# Perform binomial testing
+
+stats <- list()
+for(i in 1:sum(ind_shared)){
+  p0 <- length(which(cur_old[shared.genes.ID[i],] > 0))/ncol(cur_old)
+  bin.t <- binom.test(x = length(which(cur_young[shared.genes.ID[i],] > 0)), 
+                      n = ncol(cur_young), 
+                      p = length(which(cur_old[shared.genes.ID[i],] > 0))/ncol(cur_old))
+  stats[[i]] <- bin.t
+}
+# Remove genes expressed in 100% of cells 
+p.values <- sapply(stats, function(n){n$p.value})
+q.values <- p.adjust(p.values, method = "bonferroni")
+
+fraction.old_young_B6 <- ggplot(data.frame(young = cell_fraction.young,
+                  old = cell_fraction.old,
+                  diff = ifelse(q.values < 0.1 & 
+                                  cell_fraction.old > 0 & 
+                                  cell_fraction.old < 1, 
+                                "diff", "no_diff"))) + 
+  geom_point(aes(young, old, colour = diff)) + geom_abline(slope = 1, intercept = 0) +
+  scale_color_manual(values = c("dark blue", "grey")) + theme_minimal()
+ggsave("Results/EFDR5/Fig_4Cii.pdf", fraction.old_young_B6, width = 6, height = 5)
+```
+
+Next for CAST
+
+```{r}
+# Young condition
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+cell_fraction.young <- apply(cur_young[shared.genes.ID,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+median(cell_fraction.young)
+
+density.CAST_young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) + geom_vline(xintercept = median(cell_fraction.young)) +
+  theme_minimal()
+ggsave("Results/EFDR5/Fig_4Di.pdf", density.CAST_young, width = 5, height = 2)
+
+# Old condition
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST old 1" | 
+                          CD4.metadata$Individuals == "CAST old 2")]
+cell_fraction.old <- apply(cur_old[shared.genes.ID,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+median(cell_fraction.old)
+
+density.CAST_old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) + geom_vline(xintercept = median(cell_fraction.old)) +
+  theme_minimal()
+ggsave("Results/EFDR5/Fig_4Diii.pdf", density.CAST_old, width = 5, height = 2)
+
+# Perform binomial testing
+stats <- list()
+for(i in 1:sum(ind_shared)){
+  bin.t <- binom.test(x = length(which(cur_young[shared.genes.ID[i],] > 0)), 
+                      n = ncol(cur_young), 
+                      p = length(which(cur_old[shared.genes.ID[i],] > 0))/ncol(cur_old))
+  stats[[i]] <- bin.t
+}
+p.values <- sapply(stats, function(n){n$p.value})
+q.values <- p.adjust(p.values, method = "bonferroni")
+
+fraction.old_young_CAST <- ggplot(data.frame(young = cell_fraction.young,
+                  old = cell_fraction.old,
+                  diff = ifelse(q.values < 0.1 &
+                                  cell_fraction.old > 0 & 
+                                  cell_fraction.old < 1, "diff", "no_diff"))) + 
+  geom_point(aes(young, old, colour = diff)) + geom_abline(slope = 1, intercept = 0) +
+  scale_color_manual(values = c("dark blue", "grey")) + theme_minimal()
+ggsave("Results/EFDR5/Fig_4Dii.pdf", fraction.old_young_CAST, width = 6, height = 5)
+```
+
+Also this analysis validates Figure 4C.
+
+**Figure 4 is correct!**
+
+

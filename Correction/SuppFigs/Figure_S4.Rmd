@@ -1,0 +1,300 @@
+---
+title: "Figure S4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the analyses for Figure S4.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+library(pheatmap)
+```
+
+# PCA
+
+```{r}
+# Read in metadata file
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+rownames(CD4.metadata) <- CD4.metadata$X
+norm.counts <- readRDS("../../../Results/norm_counts.rds")
+CD4.metadata <- CD4.metadata[colnames(norm.counts),]
+
+naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(naive_cells) <- paste("Naive", colnames(naive_cells), sep = "_") 
+
+active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(active_cells) <- paste("Active", colnames(active_cells), sep = "_") 
+
+cur_cells <- cbind(naive_cells, active_cells)
+
+# Compute pca
+pca <- prcomp(t(log10(cur_cells + 1)))
+
+pca.df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], 
+                      activation = sapply(colnames(cur_cells), 
+                                          function(n){unlist(strsplit(n, split = "_"))[1]}))
+
+# Plot tSNE
+naive_active_pca <- ggplot(data = pca.df, aes(PC1, PC2)) + 
+  geom_point(aes(shape = activation), size = 4) +
+  scale_shape_manual(values = c("|", "-")) + 
+  theme_minimal() +
+  xlab("PC1") +
+  ylab("PC2") 
+ggsave("../../Results/EFDR5/Fig_S4/A.pdf", naive_active_pca, width = 5, height = 4)
+```
+
+# Genes that are differenitally expressed
+
+```{r}
+MCMC.B6.naive <- readRDS("../../../MCMCs/chain_B6.naive.Rds")
+MCMC.B6.active <- readRDS("../../../MCMCs/chain_B6.active.Rds")
+
+# To proberly exclude genes, we need to account or the offset
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+
+Offset <- OffSetCorrection(MCMC.B6.naive, MCMC.B6.active)
+genes_select <- (colMedians(MCMC.B6.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6.active@parameters$mu) > 1)
+
+Test_DE <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 2,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = genes_select)
+
+active.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Active+"]
+active.genes <- active.genes[order(Test_DE$TableMean$Mean2[match(active.genes, Test_DE$TableMean$GeneName)], decreasing = TRUE)]
+naive.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Naive+"]
+naive.genes <- naive.genes[order(Test_DE$TableMean$Mean1[match(naive.genes, Test_DE$TableMean$GeneName)], decreasing = TRUE)]
+
+naive_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(naive_cells) <- paste("Naive", colnames(naive_cells), sep = "_") 
+
+active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(active_cells) <- paste("Active", colnames(active_cells), sep = "_") 
+
+cur_cells <- cbind(naive_cells, active_cells)
+
+breaksList = seq(0, 4, length.out = 100)
+
+pdf("../../Results/EFDR5/Fig_S4/B.pdf", height = 7, width = 2)
+pheatmap(log10(cur_cells[c(naive.genes, active.genes),] + 1), cluster_cols = FALSE, 
+         cluster_rows = FALSE, 
+         color = colorRampPalette(c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), 
+         border_color = NA, show_rownames = FALSE,
+         show_colnames = FALSE)
+dev.off()
+```
+
+# Correlated genes
+
+```{r}
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Naive", 
+                              GroupLabel2 = "Active", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = genes_select)
+
+DV <- Test_DE.LFC0$TableDisp
+DV <- DV[Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff",]
+
+DV.genes <- DV$GeneName[DV$ResultDiffDisp == "Naive+"]
+
+# Collect naive and activated cells
+cur_naive <- naive_cells[DV.genes,]
+cur_active <- active_cells[DV.genes,]
+
+# Downsample cells
+cur_naive <- cur_naive[,sample(1:93, 50)]
+cur_active <- cur_active[,sample(1:53, 50)]
+
+# Only consider genes that are expressed in both conditions
+cur_naive <- cur_naive[rowMeans(cur_naive) > 1 & rowMeans(cur_active) > 1,]
+cur_active <- cur_active[rownames(cur_naive),]
+
+# Compute pearson correlations between genes
+cors.naive <- cor(t(cur_naive), method = "pearson")
+cors.active <- cor(t(cur_active), method = "pearson")
+
+# Set diagonal to 0
+diag(cors.active) <- 0
+diag(cors.naive) <- 0
+
+# Collect highly correlating genes
+r.a <- rownames(cors.active)[apply(cors.active, 1, function(n){ifelse(length(which(n > 0.8)) > 0, TRUE, FALSE)})]
+r.n <- rownames(cors.naive)[apply(cors.naive, 1, function(n){ifelse(length(which(n > 0.8)) > 0, TRUE, FALSE)})]
+
+# Plot most correlated genes
+breaksList = seq(0, 3.5, length.out = 100)
+pdf("../../Results/EFDR5/Fig_S4/Ci.pdf", height = 5, width = 5)
+pheatmap(log10(cur_naive[r.n,] + 1), 
+         col = colorRampPalette(colors = c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), breaks = breaksList,
+         border_color = NA, cellwidth = 4, cellheight = 1, 
+         fontsize = 5, show_rownames = FALSE, show_colnames = FALSE,
+         clustering_distance_rows = as.dist(1 - cor(log10(t(cur_naive[r.n,]) + 1), 
+                                                    method = "spearman")))
+dev.off()
+
+pdf("../../Results/EFDR5/Fig_S4/Cii.pdf", height = 5, width = 5)
+pheatmap(log10(cur_active[r.n,] + 1), 
+         col = colorRampPalette(colors = c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), breaks = breaksList,
+         border_color = NA, cellwidth = 4, cellheight = 1, 
+         fontsize = 5, show_rownames = FALSE, show_colnames = FALSE,
+         clustering_distance_rows = as.dist(1 - cor(log10(t(cur_naive[r.n,]) + 1), 
+                                                    method = "spearman")))
+dev.off()
+```
+
+# Percentage of cells in which genes are expressed
+
+```{r}
+# Read in raw data
+CD4.raw <- read.table("raw_data.txt", header = TRUE, sep = "\t")
+
+# Naive genes
+cur_naive <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+cur_active <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+naive_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Naive+"]
+active_genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "Active+"]
+
+# Fraction in Naive
+cell_fraction.naive <- apply(cur_naive[naive_genes,], 1, function(n){sum(n > 0)/ncol(cur_naive)})
+median(cell_fraction.naive)
+# 0.225
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S4/Di.pdf", width = 7, height = 4)
+hist(apply(cur_naive[naive_genes[sample(1:length(naive_genes), 300)],], 1, function(n){length(which(n > 0))/ncol(cur_naive)}), breaks = 50, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.naive))
+dev.off()
+
+# Fraction in Active
+cell_fraction.active <- apply(cur_active[naive_genes,], 1, function(n){sum(n > 0)/ncol(cur_active)})
+median(cell_fraction.active)
+# 0.057
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S4/Dii.pdf", width = 7, height = 4)
+hist(apply(cur_active[naive_genes[sample(1:length(naive_genes), 300)],], 1, function(n){length(which(n > 0))/ncol(cur_active)}), breaks = 50, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.active))
+dev.off()
+
+# Fraction in Naive - active genes
+cell_fraction.naive <- apply(cur_naive[active_genes,], 1, function(n){sum(n > 0)/ncol(cur_naive)})
+median(cell_fraction.naive)
+# 0.086
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S4/Diii.pdf", width = 7, height = 4)
+hist(apply(cur_naive[active_genes[sample(1:length(active_genes), 300)],], 1, function(n){length(which(n > 0))/ncol(cur_naive)}), breaks = 50, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.naive))
+dev.off()
+
+# Fraction in Active - active genes
+cell_fraction.active <- apply(cur_active[active_genes,], 1, function(n){sum(n > 0)/ncol(cur_active)})
+median(cell_fraction.active)
+# 0.622
+
+set.seed(12345)
+pdf("../../Results/EFDR5/Fig_S4/Div.pdf", width = 7, height = 4)
+hist(apply(cur_active[active_genes[sample(1:length(active_genes), 300)],], 1, function(n){length(which(n > 0))/ncol(cur_active)}), breaks = 50, xlim = c(0,1),ylim = c(0,100))
+abline(v = median(cell_fraction.active))
+dev.off()
+```
+
+# GO analysis
+
+```{r}
+write.table(naive_genes,
+            "../../Results/EFDR5/Fig_S4/naive_genes.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+write.table(active_genes,
+            "../../Results/EFDR5/Fig_S4/active_genes.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+write.table(Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean != "ExcludedByUser"],
+            "../../Results/EFDR5/Fig_S4/background.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+
+cur_dat <- data.frame(names = factor(c("ribosome biogenesis", "rRNA processing",
+                                "immune response", "inflammatory response", "rRNA modification",
+                                "positive regulation of ERK1 and ERK2 cascade"),
+                                levels = c("ribosome biogenesis", "rRNA processing",
+                                "immune response", "inflammatory response", "rRNA modification",
+                                "positive regulation of ERK1 and ERK2 cascade")),
+                      adj.p.value = c(0.0000027, 0.000028, 0.0012, 0.0094, 0.03, 0.15))
+
+active_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,6)) 
+ggsave("../../Results/EFDR5/Fig_S4/Eii.pdf", active_enrichment, width = 5, height = 4)
+
+cur_dat <- data.frame(names = factor(c("signal transduction", "intracellular signal transduction",
+                                "G-protein coupled receptor signaling pathway", "	calcium ion transport", "regulation of Rho protein signal transduction", "	T cell receptor V(D)J recombination"),
+                                levels = c("signal transduction", "intracellular signal transduction",
+                                "G-protein coupled receptor signaling pathway", "	calcium ion transport", "regulation of Rho protein signal transduction", "	T cell receptor V(D)J recombination")),
+                      adj.p.value = c(0.00087, 0.013, 0.023, 0.13, 0.11, 0.22))
+
+naive_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,6)) 
+ggsave("../../Results/EFDR5/Fig_S4/Ei.pdf", naive_enrichment, width = 5, height = 4)
+```
+
+# PCA
+
+```{r}
+active_cells <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(active_cells) <- paste("Active", colnames(active_cells), sep = "_") 
+
+# Compute pca
+pca <- prcomp(t(log10(active_cells + 1)))
+
+pca.df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2])
+
+# Plot tSNE
+active_pca <- ggplot(data = pca.df, aes(PC1, PC2)) + 
+  geom_point(shape = "|", size = 4)  + 
+  theme_minimal() +
+  xlab("PC1") +
+  ylab("PC2") 
+ggsave("../../Results/EFDR5/Fig_S4/F.pdf", active_pca, width = 5, height = 4)
+```
+
+scLVM was computed on the raw counts using the scLVM internal normalization.
+We don't need to compute this again.
+

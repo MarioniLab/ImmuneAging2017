@@ -1,0 +1,199 @@
+---
+title: "Figure S7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the analyses for Figure S7.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+library(pheatmap)
+```
+
+# Heatmap
+
+```{r}
+# Read in metadata file
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+rownames(CD4.metadata) <- CD4.metadata$X
+norm.counts <- readRDS("../../../Results/norm_counts.rds")
+CD4.metadata <- CD4.metadata[colnames(norm.counts),]
+
+# Read in shared immune response genes
+genes <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+
+B6.active.young <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+B6.active.old <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 old 1" |
+                             CD4.metadata$Individuals == "B6 old 2")]
+CAST.active.young <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+CAST.active.old <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "CAST old 1" |
+                             CD4.metadata$Individuals == "CAST old 2")]
+
+all.cells <- cbind(B6.active.young, B6.active.old, CAST.active.young, CAST.active.old)
+
+
+pdf("../../Results/EFDR5/Fig_S7/A.pdf", height = 5, width = 7)
+pheatmap(log10(all.cells[genes$Gene.ID,] + 1), cluster_cols = FALSE, 
+         cluster_rows = FALSE, 
+         color = colorRampPalette(c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), 
+         border_color = NA, show_rownames = FALSE,
+         show_colnames = FALSE, gaps_col = c(53, 127, 162))
+dev.off()
+```
+
+# Removal of subpopulations
+
+```{r}
+# Load chains
+MCMC.B6.active <- readRDS("../../MCMCs/chain_B6.active.woContamination.Rds")
+MCMC.B6.active.old <- readRDS("../../MCMCs/chain_B6.active.old.woContamination.Rds")
+```
+
+Read in shared immune genes
+
+```{r}
+shared <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+```
+
+Perform testing
+
+```{r}
+# Select genes for testing
+ind_shared <- colnames(MCMC.B6.active@parameters$mu) %in% shared$Gene.ID
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.active.old, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+Visualize change in variability.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0$TableDisp[match(shared$Gene.ID, Test_DE.LFC0$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0$TableMean[match(shared$Gene.ID, Test_DE.LFC0$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_woContamination <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-2,2))
+
+ggsave("../../Results/EFDR5/Fig_S7/C.pdf", DV_woContamination, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+# 0.84
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+# 0.16
+```
+
+# Additional replicates
+
+```{r}
+# Load chains
+MCMC.B6.active <- readRDS("../../../MCMCs/chain_B6.active.rds")
+MCMC.B6.active.old <- readRDS("../../MCMCs/chain_B6.active.old.replicates.Rds")
+```
+
+Read in shared immune genes
+
+```{r}
+shared <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+```
+
+Perform testing
+
+```{r}
+# Select genes for testing
+ind_shared <- colnames(MCMC.B6.active@parameters$mu) %in% shared$Gene.ID
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.active.old, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+```{r}
+cur_table.disp <- Test_DE.LFC0$TableDisp[match(shared$Gene.ID, Test_DE.LFC0$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0$TableMean[match(shared$Gene.ID, Test_DE.LFC0$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_replicates <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0)+
+  ylim(c(-2,2))
+
+ggsave("../../Results/EFDR5/Fig_S7/D.pdf", DV_replicates, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+# 0.94
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+# 0.06
+```
+
+# Downsampled
+
+```{r}
+# Load chains
+MCMC.B6.active <- readRDS("../../MCMCs/chain_B6.active.young.downsampled.Rds")
+MCMC.B6.active.old <- readRDS("../../MCMCs/chain_B6.active.old.downsampled.Rds")
+```
+
+Read in shared immune genes
+
+```{r}
+shared <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+```
+
+Perform testing
+
+```{r}
+# Select genes for testing
+ind_shared <- colnames(MCMC.B6.active@parameters$mu) %in% shared$Gene.ID
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.active.old, 
+                              Chain2 = MCMC.B6.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+Visualize change in variability.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0$TableDisp[match(shared$Gene.ID, Test_DE.LFC0$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0$TableMean[match(shared$Gene.ID, Test_DE.LFC0$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_downsampled <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0)+
+  ylim(c(-2,2))
+
+ggsave("../../Results/EFDR5/Fig_S7/E.pdf", DV_downsampled, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+# 0.86
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+# 0.14
+```

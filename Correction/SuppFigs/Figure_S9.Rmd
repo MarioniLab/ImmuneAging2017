@@ -1,0 +1,114 @@
+---
+title: "Figure S9"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the FACS sorted effector memory and naive T cell analysis.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+```
+
+# Naive T cells
+
+```{r}
+# Load chains
+MCMC.Naive.active <- readRDS("../../MCMCs/chain_FACSnaive.active.Rds")
+MCMC.Naive.active.old <- readRDS("../../MCMCs/chain_FACSnaive.active.old.Rds")
+```
+
+Read in shared immune genes
+
+```{r}
+shared <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+```
+
+Perform testing
+
+```{r}
+# Select genes for testing
+ind_shared <- colnames(MCMC.Naive.active@parameters$mu) %in% shared$Gene.ID
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.Naive.active.old, 
+                              Chain2 = MCMC.Naive.active,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+Visualize change in variability.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0$TableDisp[match(shared$Gene.ID, Test_DE.LFC0$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0$TableMean[match(shared$Gene.ID, Test_DE.LFC0$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_Naive <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-2,2))
+
+ggsave("../../Results/EFDR5/Fig_S9/A.pdf", DV_Naive, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+# 0.77
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+# 0.23
+```
+
+# Effector Memory T cells
+
+```{r}
+# Load chains
+MCMC.EM.active <- readRDS("../../MCMCs/chain_FACSem.active.Rds")
+MCMC.EM.active.old <- readRDS("../../MCMCs/chain_FACSem.active.old.Rds")
+```
+
+Read in shared immune genes
+
+```{r}
+shared <- read.xlsx("../../../Results/EFDR5/S3_corrected.xlsx", sheet = 2)
+```
+
+Perform testing
+
+```{r}
+# Select genes for testing
+ind_shared <- colnames(MCMC.EM.active@parameters$mu) %in% shared$Gene.ID
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.EM.active.old, 
+                              Chain2 = MCMC.EM.active,
+                              EpsilonM = 0, 
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", EFDR_M = 0.05, 
+                              Plot = FALSE,
+                              PlotOffset = FALSE,
+                              GenesSelect = ind_shared)
+```
+
+Visualize change in variability.
+
+```{r}
+cur_table.disp <- Test_DE.LFC0$TableDisp[match(shared$Gene.ID, Test_DE.LFC0$TableDisp$GeneName),]
+cur_table.mean <- Test_DE.LFC0$TableMean[match(shared$Gene.ID, Test_DE.LFC0$TableMean$GeneName),]
+cur_table <- cur_table.disp[cur_table.mean$ResultDiffMean == "NoDiff",]
+
+DV_EM <- ggplot(data.frame(Mean = log(cur_table$MeanOverall),
+                  LFC.disp = cur_table$DispLog2FC)) +
+  geom_point(aes(Mean, LFC.disp)) + geom_abline(slope = 0, intercept = 0) +
+  ylim(c(-2,2))
+
+ggsave("../../Results/EFDR5/Fig_S9/B.pdf", DV_EM, width = 5, height = 4)
+
+sum(cur_table$DispLog2FC >= 0)/nrow(cur_table)
+# 0.75
+sum(cur_table$DispLog2FC < 0)/nrow(cur_table)
+# 0.25
+```

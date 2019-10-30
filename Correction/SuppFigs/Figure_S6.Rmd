@@ -1,0 +1,553 @@
+---
+title: "Figure S6"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the analyses for Figure S7.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+```
+
+## Expression data
+
+To extract the number of cells in which each gene is expressed, we also require 
+the raw counts and the metadata file that summarises the experimental design.
+This is obtained as follows.
+
+```{r, message=FALSE, results="hide"}
+website <- "https://www.ebi.ac.uk/arrayexpress/files/E-MTAB-4888/"
+file <- "E-MTAB-4888.processed.1.zip"
+destfile <- "raw_data.txt.zip"
+download.file(paste(website, file, sep = ""), 
+              destfile = destfile)
+  
+# Unzip file
+unzip("raw_data.txt.zip")
+file.remove("raw_data.txt.zip")
+
+# Read in raw data
+CD4.raw <- read.table("raw_data.txt", header = TRUE, sep = "\t")
+
+# Download metadata file
+file <- "E-MTAB-4888.additional.1.zip"
+destfile <- "metadata.txt.zip"
+download.file(paste(website, file, sep = ""), 
+              destfile = destfile)
+  
+# Unzip file
+unzip("metadata.txt.zip")
+file.remove("metadata.txt.zip")
+
+# Read in metadata file
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+
+# Save library identifier as rownames
+rownames(CD4.metadata) <- CD4.metadata$X
+
+# Order metadata
+CD4.metadata <- CD4.metadata[colnames(CD4.raw),]
+
+# Normalized counts
+norm.counts <- readRDS("../../../Results/norm_counts.rds")
+```
+
+# PCAs
+
+```{r}
+# Naive cells
+Data <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2" |
+                             CD4.metadata$Individuals == "B6 old 1" |
+                             CD4.metadata$Individuals == "B6 old 2" |
+                             CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2" |
+                             CD4.metadata$Individuals == "CAST old 1" |
+                             CD4.metadata$Individuals == "CAST old 2")]
+cur_meta <- CD4.metadata[colnames(Data),]
+
+species <- vector(length = ncol(Data))
+species[cur_meta$Strain == "Mus musculus domesticus" & cur_meta$Age == "Young"] <- "B6_young" 
+species[cur_meta$Strain == "Mus musculus castaneus" & cur_meta$Age == "Young"] <- "CAST_young" 
+species[cur_meta$Strain == "Mus musculus domesticus" & cur_meta$Age == "Old"] <- "B6_old" 
+species[cur_meta$Strain == "Mus musculus castaneus" & cur_meta$Age == "Old"] <- "CAST_old" 
+
+pca <- prcomp(t(log10(Data + 1)), center = TRUE)
+
+pca.df <- data.frame(pca.1 = pca$x[,1], pca.2 = pca$x[,2], species = species)
+
+naivecells.pca <- ggplot(data = pca.df, aes(pca.1, pca.2)) + 
+  geom_point(data = subset(pca.df, species == "B6_young" | species == "CAST_young"), size = 3, col = "black") +
+  geom_point(data = subset(pca.df, species == "B6_young" | species == "CAST_young"), aes(colour = species), size = 2) +
+  geom_point(data = subset(pca.df, species == "B6_old" | species == "CAST_old"), size = 4, col = "black", pch = 17) +
+  geom_point(data = subset(pca.df, species == "B6_old" | species == "CAST_old"), aes(colour = species), size = 2, pch = 17) + 
+  scale_colour_manual(values = c("CAST_young" = "goldenrod",
+                                "CAST_old" = "goldenrod",
+                                "B6_young" = "white",
+                                "B6_old" = "white")) +
+  theme_minimal() +
+  ylab("PC2") +
+  xlab("PC1") 
+
+ggsave("../../Results/EFDR5/Fig_S6/A.pdf", naivecells.pca, width = 5, height = 4)
+
+# Active cells
+Data <- norm.counts[,CD4.metadata$Stimulus == "Active" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2" |
+                             CD4.metadata$Individuals == "B6 old 1" |
+                             CD4.metadata$Individuals == "B6 old 2" |
+                             CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2" |
+                             CD4.metadata$Individuals == "CAST old 1" |
+                             CD4.metadata$Individuals == "CAST old 2")]
+cur_meta <- CD4.metadata[colnames(Data),]
+
+species <- vector(length = ncol(Data))
+species[cur_meta$Strain == "Mus musculus domesticus" & cur_meta$Age == "Young"] <- "B6_young" 
+species[cur_meta$Strain == "Mus musculus castaneus" & cur_meta$Age == "Young"] <- "CAST_young" 
+species[cur_meta$Strain == "Mus musculus domesticus" & cur_meta$Age == "Old"] <- "B6_old" 
+species[cur_meta$Strain == "Mus musculus castaneus" & cur_meta$Age == "Old"] <- "CAST_old" 
+
+pca <- prcomp(t(log10(Data + 1)), center = TRUE)
+
+pca.df <- data.frame(pca.1 = pca$x[,1], pca.2 = pca$x[,2], species = species)
+
+activecells.pca <- ggplot(data = pca.df, aes(pca.1, pca.2)) + 
+  geom_point(data = subset(pca.df, species == "B6_young" | species == "CAST_young"), size = 3, col = "black") +
+  geom_point(data = subset(pca.df, species == "B6_young" | species == "CAST_young"), aes(colour = species), size = 2) +
+  geom_point(data = subset(pca.df, species == "B6_old" | species == "CAST_old"), size = 4, col = "black", pch = 17) +
+  geom_point(data = subset(pca.df, species == "B6_old" | species == "CAST_old"), aes(colour = species), size = 2, pch = 17) + 
+  scale_colour_manual(values = c("CAST_young" = "goldenrod",
+                                "CAST_old" = "goldenrod",
+                                "B6_young" = "white",
+                                "B6_old" = "white")) +
+  theme_minimal() +
+  ylab("PC2") +
+  xlab("PC1") 
+
+ggsave("../../Results/EFDR5/Fig_S6/B.pdf", activecells.pca, width = 5, height = 4)
+
+```
+
+# DE between old and young
+
+## Naive B6
+
+```{r}
+# Load chains
+MCMC.B6.naive.young <- readRDS("../../../MCMCs/chain_B6.naive.Rds")
+MCMC.B6.naive.old <- readRDS("../../MCMCs/chain_B6.naive.old.Rds")
+
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.B6.naive.young, MCMC.B6.naive.old)
+
+# Exclude lowly expressed genes
+include <- (colMedians(MCMC.B6.naive.young@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6.naive.old@parameters$mu) > 1)
+
+# Testing
+Test_DE.B6.naive <- BASiCS_TestDE(Chain1 = MCMC.B6.naive.young, 
+                         Chain2 = MCMC.B6.naive.old,
+                         EpsilonM = 2,
+                         GroupLabel1 = "Young", 
+                         GroupLabel2 = "Old", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.naive.young, 
+                              Chain2 = MCMC.B6.naive.old,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Young", 
+                              GroupLabel2 = "Old", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = include)
+
+# Visualize plot
+cur_df <- data.frame(old = Test_DE.B6.naive$TableMean$Mean2,
+                     young = Test_DE.B6.naive$TableMean$Mean1,
+                     testing = ifelse(Test_DE.B6.naive$TableMean$ResultDiffMean == "Old+", "Old",
+                                ifelse(Test_DE.B6.naive$TableMean$ResultDiffMean == "Young+", "Young", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+B6.naive.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(young + 1), log10(old + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Young" = "dark blue",
+                                 "Old" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal() +
+  xlim(c(0,4)) + ylim(c(0,4))
+ggsave("../../Results/EFDR5/Fig_S6/Ci.pdf", B6.naive.plot, width = 7, height = 5)
+
+# Percentage of genes
+# Old
+sum(Test_DE.B6.naive$TableMean$ResultDiffMean == "Old+")/sum(Test_DE.B6.naive$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.013
+
+# Young
+sum(Test_DE.B6.naive$TableMean$ResultDiffMean == "Young+")/sum(Test_DE.B6.naive$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.1066
+
+# Plot distributions
+# Old condition
+old_genes <- Test_DE.B6.naive$TableMean$GeneName[Test_DE.B6.naive$TableMean$ResultDiffMean == "Old+"]
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "B6 old 1" | 
+                          CD4.metadata$Individuals == "B6 old 2")]
+cell_fraction.old <- apply(cur_old[old_genes,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+
+density.old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Ci_old_distr.pdf", density.old, width = 7, height = 5)
+
+# Young condition
+young_genes <- Test_DE.B6.naive$TableMean$GeneName[Test_DE.B6.naive$TableMean$ResultDiffMean == "Young+"]
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+cell_fraction.young <- apply(cur_young[young_genes,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+
+density.young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Ci_young_distr.pdf", density.young, width = 7, height = 5)
+```
+
+## Naive CAST
+
+```{r}
+# Load chains
+MCMC.CAST.naive.young <- readRDS("../../../MCMCs/chain_CAST.naive.Rds")
+MCMC.CAST.naive.old <- readRDS("../../MCMCs/chain_CAST.naive.old.Rds")
+
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.CAST.naive.young, MCMC.CAST.naive.old)
+
+# Exclude lowly expressed genes
+include <- (colMedians(MCMC.CAST.naive.young@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST.naive.old@parameters$mu) > 1)
+
+# Testing
+Test_DE.CAST.naive <- BASiCS_TestDE(Chain1 = MCMC.CAST.naive.young, 
+                         Chain2 = MCMC.CAST.naive.old,
+                         EpsilonM = 2,
+                         GroupLabel1 = "Young", 
+                         GroupLabel2 = "Old", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.CAST.naive.young, 
+                              Chain2 = MCMC.CAST.naive.old,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = include)
+
+# Visualize plot
+cur_df <- data.frame(old = Test_DE.CAST.naive$TableMean$Mean2,
+                     young = Test_DE.CAST.naive$TableMean$Mean1,
+                     testing = ifelse(Test_DE.CAST.naive$TableMean$ResultDiffMean == "Old+", "Old",
+                                ifelse(Test_DE.CAST.naive$TableMean$ResultDiffMean == "Young+", "Young", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+CAST.naive.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(young + 1), log10(old + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Young" = "dark blue",
+                                 "Old" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal() +
+  xlim(c(0,3.8)) + ylim(c(0,3.8))
+ggsave("../../Results/EFDR5/Fig_S6/Cii.pdf", CAST.naive.plot, width = 7, height = 5)
+
+# Percentage of genes
+# Old
+sum(Test_DE.CAST.naive$TableMean$ResultDiffMean == "Old+")/sum(Test_DE.CAST.naive$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.044
+
+# Young
+sum(Test_DE.CAST.naive$TableMean$ResultDiffMean == "Young+")/sum(Test_DE.CAST.naive$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.0094
+
+# Plot distributions
+# Old condition
+old_genes <- Test_DE.CAST.naive$TableMean$GeneName[Test_DE.CAST.naive$TableMean$ResultDiffMean == "Old+"]
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "CAST old 1" | 
+                          CD4.metadata$Individuals == "CAST old 2")]
+cell_fraction.old <- apply(cur_old[old_genes,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+
+density.old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Cii_old_distr.pdf", density.old, width = 7, height = 5)
+
+# Young condition
+young_genes <- Test_DE.CAST.naive$TableMean$GeneName[Test_DE.CAST.naive$TableMean$ResultDiffMean == "Young+"]
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Unstimulated" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+cell_fraction.young <- apply(cur_young[young_genes,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+
+density.young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Cii_young_distr.pdf", density.young, width = 7, height = 5)
+```
+
+## Active B6
+
+```{r}
+# Load chains
+MCMC.B6.active.young <- readRDS("../../../MCMCs/chain_B6.active.rds")
+MCMC.B6.active.old <- readRDS("../../../MCMCs/chain_B6.active.old.rds")
+
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.B6.active.young, MCMC.B6.active.old)
+
+# Exclude lowly expressed genes
+include <- (colMedians(MCMC.B6.active.young@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6.active.old@parameters$mu) > 1)
+
+# Testing
+Test_DE.B6.active <- BASiCS_TestDE(Chain1 = MCMC.B6.active.young, 
+                         Chain2 = MCMC.B6.active.old,
+                         EpsilonM = 2,
+                         GroupLabel1 = "Young", 
+                         GroupLabel2 = "Old", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.B6.active.young, 
+                              Chain2 = MCMC.B6.active.old,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Young", 
+                              GroupLabel2 = "Old", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = include)
+
+# Visualize plot
+cur_df <- data.frame(old = Test_DE.B6.active$TableMean$Mean2,
+                     young = Test_DE.B6.active$TableMean$Mean1,
+                     testing = ifelse(Test_DE.B6.active$TableMean$ResultDiffMean == "Old+", "Old",
+                                ifelse(Test_DE.B6.active$TableMean$ResultDiffMean == "Young+", "Young", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+B6.active.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(young + 1), log10(old + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Young" = "dark blue",
+                                 "Old" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal() +
+  xlim(c(0,4)) + ylim(c(0,4))
+ggsave("../../Results/EFDR5/Fig_S6/Di.pdf", B6.active.plot, width = 7, height = 5)
+
+# Percentage of genes
+# Old
+sum(Test_DE.B6.active$TableMean$ResultDiffMean == "Old+")/sum(Test_DE.B6.active$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.0204
+
+# Young
+sum(Test_DE.B6.active$TableMean$ResultDiffMean == "Young+")/sum(Test_DE.B6.active$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.1267
+
+# Plot distributions
+# Old condition
+old_genes <- Test_DE.B6.active$TableMean$GeneName[Test_DE.B6.active$TableMean$ResultDiffMean == "Old+"]
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 old 1" | 
+                          CD4.metadata$Individuals == "B6 old 2")]
+cell_fraction.old <- apply(cur_old[old_genes,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+
+density.old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Di_old_distr.pdf", density.old, width = 7, height = 5)
+
+# Young condition
+young_genes <- Test_DE.B6.active$TableMean$GeneName[Test_DE.B6.active$TableMean$ResultDiffMean == "Young+"]
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus domesticus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "B6 young 1" | 
+                          CD4.metadata$Individuals == "B6 young 2")]
+cell_fraction.young <- apply(cur_young[young_genes,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+
+density.young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Di_young_distr.pdf", density.young, width = 7, height = 5)
+```
+
+## active CAST
+
+```{r}
+# Load chains
+MCMC.CAST.active.young <- readRDS("../../../MCMCs/chain_CAST.active.Rds")
+MCMC.CAST.active.old <- readRDS("../../../MCMCs/chain_CAST.active.old.Rds")
+
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.CAST.active.young, MCMC.CAST.active.old)
+
+# Exclude lowly expressed genes
+include <- (colMedians(MCMC.CAST.active.young@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST.active.old@parameters$mu) > 1)
+
+# Testing
+Test_DE.CAST.active <- BASiCS_TestDE(Chain1 = MCMC.CAST.active.young, 
+                         Chain2 = MCMC.CAST.active.old,
+                         EpsilonM = 2,
+                         GroupLabel1 = "Young", 
+                         GroupLabel2 = "Old", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+
+Test_DE.LFC0 <- BASiCS_TestDE(Chain1 = MCMC.CAST.active.young, 
+                              Chain2 = MCMC.CAST.active.old,
+                              EpsilonM = 0,
+                              GroupLabel1 = "Old", 
+                              GroupLabel2 = "Young", 
+                              Plot = FALSE,
+                              PlotOffset = FALSE, EFDR_M = 0.05,
+                              GenesSelect = include)
+
+# Visualize plot
+cur_df <- data.frame(old = Test_DE.CAST.active$TableMean$Mean2,
+                     young = Test_DE.CAST.active$TableMean$Mean1,
+                     testing = ifelse(Test_DE.CAST.active$TableMean$ResultDiffMean == "Old+", "Old",
+                                ifelse(Test_DE.CAST.active$TableMean$ResultDiffMean == "Young+", "Young", 
+                                             ifelse(Test_DE.LFC0$TableMean$ResultDiffMean == "NoDiff", "For_variability", "NoDiff"))))
+CAST.active.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(young + 1), log10(old + 1), colour = testing)) + 
+  scale_colour_manual(values = c("Young" = "dark blue",
+                                 "Old" = "dark red",
+                                 "NoDiff" = "grey",
+                                 "For_variability" = "black")) + theme_minimal() +
+  xlim(c(0,3.8)) + ylim(c(0,3.8))
+ggsave("../../Results/EFDR5/Fig_S6/Dii.pdf", CAST.active.plot, width = 7, height = 5)
+
+# Percentage of genes
+# Old
+sum(Test_DE.CAST.active$TableMean$ResultDiffMean == "Old+")/sum(Test_DE.CAST.active$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.0438
+
+# Young
+sum(Test_DE.CAST.active$TableMean$ResultDiffMean == "Young+")/sum(Test_DE.CAST.active$TableMean$ResultDiffMean != "ExcludedByUser")
+# 0.0214
+
+# Plot distributions
+# Old condition
+old_genes <- Test_DE.CAST.active$TableMean$GeneName[Test_DE.CAST.active$TableMean$ResultDiffMean == "Old+"]
+cur_old <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Old" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST old 1" | 
+                          CD4.metadata$Individuals == "CAST old 2")]
+cell_fraction.old <- apply(cur_old[old_genes,], 1, function(n){sum(n > 0)/ncol(cur_old)})
+
+density.old <- ggplot(data.frame(fraction = cell_fraction.old)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal() + xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Dii_old_distr.pdf", density.old, width = 7, height = 5)
+
+# Young condition
+young_genes <- Test_DE.CAST.active$TableMean$GeneName[Test_DE.CAST.active$TableMean$ResultDiffMean == "Young+"]
+cur_young <- CD4.raw[,CD4.metadata$Strain == "Mus musculus castaneus" & 
+                       CD4.metadata$Age == "Young" &
+                       CD4.metadata$Stimulus == "Active" &
+                       (CD4.metadata$Individuals == "CAST young 1" | 
+                          CD4.metadata$Individuals == "CAST young 2")]
+cell_fraction.young <- apply(cur_young[young_genes,], 1, function(n){sum(n > 0)/ncol(cur_young)})
+
+density.young <- ggplot(data.frame(fraction = cell_fraction.young)) + 
+  geom_density(aes(fraction)) +
+  theme_minimal()+ xlim(c(0,1))
+
+ggsave("../../Results/EFDR5/Fig_S6/Dii_young_distr.pdf", density.young, width = 7, height = 5)
+```
+
+# Jaccard index
+
+```{r}
+jac.index <- function(a,b){
+  length(intersect(a,b))/(length(a) + length(b) - length(intersect(a,b)))
+}
+
+# Young naive
+genes.B6 <- Test_DE.B6.naive$TableMean$GeneName[Test_DE.B6.naive$TableMean$ResultDiffMean == "Young+"]
+genes.CAST <- Test_DE.CAST.naive$TableMean$GeneName[Test_DE.CAST.naive$TableMean$ResultDiffMean == "Young+"]
+
+jac.index(genes.B6, genes.CAST)
+# 0.0069
+
+# Old naive
+genes.B6 <- Test_DE.B6.naive$TableMean$GeneName[Test_DE.B6.naive$TableMean$ResultDiffMean == "Old+"]
+genes.CAST <- Test_DE.CAST.naive$TableMean$GeneName[Test_DE.CAST.naive$TableMean$ResultDiffMean == "Old+"]
+
+jac.index(genes.B6, genes.CAST)
+# 0.0201
+
+# Young active
+genes.B6 <- Test_DE.B6.active$TableMean$GeneName[Test_DE.B6.active$TableMean$ResultDiffMean == "Young+"]
+genes.CAST <- Test_DE.CAST.active$TableMean$GeneName[Test_DE.CAST.active$TableMean$ResultDiffMean == "Young+"]
+
+jac.index(genes.B6, genes.CAST)
+# 0.00955
+
+# Old active
+genes.B6 <- Test_DE.B6.active$TableMean$GeneName[Test_DE.B6.active$TableMean$ResultDiffMean == "Old+"]
+genes.CAST <- Test_DE.CAST.active$TableMean$GeneName[Test_DE.CAST.active$TableMean$ResultDiffMean == "Old+"]
+
+jac.index(genes.B6, genes.CAST)
+# 0.0211
+```
+

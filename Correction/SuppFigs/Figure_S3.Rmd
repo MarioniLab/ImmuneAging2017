@@ -1,0 +1,242 @@
+---
+title: "Figure S3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script reproduces the analyses for Figure S3.
+
+```{r}
+library(BASiCS)
+library(ggplot2)
+library(openxlsx)
+library(pheatmap)
+```
+
+# Differential expression testing between B6 and CAST
+
+```{r}
+MCMC.B6.naive <- readRDS("../../../MCMCs/chain_B6.naive.Rds")
+MCMC.CAST.naive <- readRDS("../../../MCMCs/chain_CAST.naive.Rds")
+
+# Offset correction
+# Function for correcting differences in population wide RNA content
+OffSetCorrection <- function(MCMC1, MCMC2){
+  median(rowSums(MCMC1@parameters$mu)/rowSums(MCMC2@parameters$mu)) 
+}
+# Offset correction
+Offset <- OffSetCorrection(MCMC.B6.naive, MCMC.CAST.naive)
+
+include <- (colMedians(MCMC.B6.naive@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST.naive@parameters$mu) > 1)
+
+# Test for changes in expression
+Test_DE <- BASiCS_TestDE(Chain1 = MCMC.B6.naive, 
+                         Chain2 = MCMC.CAST.naive,
+                         EpsilonM = 2,
+                         GroupLabel1 = "B6", 
+                         GroupLabel2 = "CAST", 
+                         Plot = FALSE, EFDR_M = 0.05,
+                         PlotOffset = FALSE,
+                         GenesSelect = include)
+
+# For visualization
+cur_df <- data.frame(B6 = Test_DE$TableMean$Mean1,
+                     CAST = Test_DE$TableMean$Mean2,
+                     testing = ifelse(Test_DE$TableMean$ResultDiffMean == "B6+", "B6",
+                              ifelse(Test_DE$TableMean$ResultDiffMean == "CAST+", "CAST", "NoDiff")))
+
+B6_CAST.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(B6 + 1), log10(CAST + 1), colour = testing)) + 
+  scale_colour_manual(values = c("B6" = "dark blue",
+                                 "CAST" = "dark red",
+                                 "NoDiff" = "grey")) + theme_minimal()
+
+ggsave("../../Results/EFDR5/Fig_S3/A.pdf", B6_CAST.plot, width = 7, height = 5)
+```
+
+
+# Mapping issues
+
+```{r}
+MCMC.B6_mapped_B6 <- readRDS("../../../MCMCs/chain_B6_mapped_B6.rds")
+MCMC.B6_mapped_CAST <- readRDS("../../../MCMCs/chain_B6_mapped_CAST.rds")
+MCMC.CAST_mapped_CAST <- readRDS("../../../MCMCs/chain_CAST_mapped_CAST.rds")
+MCMC.CAST_mapped_B6 <- readRDS("../../../MCMCs/chain_CAST_mapped_B6.rds")
+
+# Test these chains
+Offset <- OffSetCorrection(MCMC.B6_mapped_B6, MCMC.B6_mapped_CAST)
+include <- (colMedians(MCMC.B6_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.B6_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.B6 <- BASiCS_TestDE(Chain1 = MCMC.B6_mapped_B6, 
+                              Chain2 = MCMC.B6_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+Offset <- OffSetCorrection(MCMC.CAST_mapped_B6, MCMC.CAST_mapped_CAST)
+include <- (colMedians(MCMC.CAST_mapped_B6@parameters$mu) > 1*Offset | 
+                   colMedians(MCMC.CAST_mapped_CAST@parameters$mu) > 1)
+
+Test_DE.mapping.CAST <- BASiCS_TestDE(Chain1 = MCMC.CAST_mapped_B6, 
+                              Chain2 = MCMC.CAST_mapped_CAST,
+                              EpsilonM = 2,
+                              GroupLabel1 = "B6", 
+                              GroupLabel2 = "CAST", 
+                              Plot = FALSE, EFDR_M = 0.05,
+                              PlotOffset = FALSE,
+                              GenesSelect = include)
+
+genes.mapping.issues <- unique(c(Test_DE.mapping.B6$TableMean$GeneName[
+  Test_DE.mapping.B6$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.B6$TableMean$ResultDiffMean != "NoDiff"],
+  Test_DE.mapping.CAST$TableMean$GeneName[
+  Test_DE.mapping.CAST$TableMean$ResultDiffMean != "ExcludedByUser" &
+    Test_DE.mapping.CAST$TableMean$ResultDiffMean != "NoDiff"]))
+
+# % of DE genes
+length(genes.mapping.issues) / 
+  sum(Test_DE.mapping.B6$TableMean$ResultDiffMean != "ExcludedByUser")
+
+# For visualization
+cur_df <- data.frame(B6 = Test_DE.mapping.CAST$TableMean$Mean1,
+                     CAST = Test_DE.mapping.CAST$TableMean$Mean2,
+                     testing = ifelse(Test_DE.mapping.CAST$TableMean$ResultDiffMean == "B6+", "B6",
+                              ifelse(Test_DE.mapping.CAST$TableMean$ResultDiffMean == "CAST+", "CAST", "NoDiff")))
+
+CAST_mapping.plot <- ggplot(cur_df) +
+  geom_point(aes(log10(B6 + 1), log10(CAST + 1), colour = testing)) + 
+  scale_colour_manual(values = c("B6" = "dark blue",
+                                 "CAST" = "dark red",
+                                 "NoDiff" = "grey")) + theme_minimal()
+
+ggsave("../../Results/EFDR5/Fig_S3/B.pdf", CAST_mapping.plot, width = 7, height = 5)
+```
+
+# Visualize species specific genes
+
+```{r}
+# B6 genes
+
+B6.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "B6+"]
+B6.genes <- B6.genes[!(B6.genes %in% genes.mapping.issues)]
+
+# CAST genes
+CAST.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean == "CAST+"]
+CAST.genes <- CAST.genes[!(CAST.genes %in% genes.mapping.issues)]
+
+# Prop of DE genes that could be explained by mapping issues
+nB6 <- sum(Test_DE$TableMean$ResultDiffMean == "B6+")
+nCAST <- sum(Test_DE$TableMean$ResultDiffMean == "CAST+")
+1 - (length(B6.genes) + length(CAST.genes)) / (nB6 + nCAST)
+
+# Read in normalized counts
+norm.counts <- readRDS("../../../Results/norm_counts.rds")
+CD4.metadata <- read.table("metadata_file.txt", header = TRUE, sep = "\t")
+rownames(CD4.metadata) <- CD4.metadata$X
+CD4.metadata <- CD4.metadata[colnames(norm.counts),]
+
+B6_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "B6 young 1" |
+                             CD4.metadata$Individuals == "B6 young 2")]
+colnames(B6_cells) <- paste("B6", colnames(B6_cells), sep = "_") 
+
+CAST_cells <- norm.counts[,CD4.metadata$Stimulus == "Unstimulated" &
+                          (CD4.metadata$Individuals == "CAST young 1" |
+                             CD4.metadata$Individuals == "CAST young 2")]
+colnames(CAST_cells) <- paste("CAST", colnames(CAST_cells), sep = "_") 
+
+cur_cells <- cbind(B6_cells, CAST_cells)
+
+breaksList = seq(0, 4, length.out = 100)
+
+pdf("../../Results/EFDR5/Fig_S3/Ci.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[B6.genes,] + 1), cluster_cols = FALSE, 
+         color = colorRampPalette(c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), 
+         border_color = NA, breaks = breaksList, show_rownames = FALSE,
+         show_colnames = FALSE, gaps_col = 93)
+dev.off()
+
+pdf("../../Results/EFDR5/Fig_S3/Cii.pdf", height = 3, width = 3)
+pheatmap(log10(cur_cells[CAST.genes,] + 1), cluster_cols = FALSE, 
+         color = colorRampPalette(c("#0571b0", "#92c5de", "#f7f7f7", "#f4a582", "#ca0020"))(100), 
+         border_color = NA, breaks = breaksList, show_rownames = FALSE,
+         show_colnames = FALSE, gaps_col = 93)
+dev.off()
+```
+
+# GO analysis
+
+```{r}
+write.table(B6.genes,
+            "../../Results/EFDR5/Fig_S3/B6_genes.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+write.table(CAST.genes,
+            "../../Results/EFDR5/Fig_S3/CAST_genes.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+write.table(Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean != "ExcludedByUser"],
+            "../../Results/EFDR5/Fig_S3//background.txt", sep = "\t", row.names = FALSE, col.names = FALSE,
+            quote = FALSE)
+
+cur_dat <- data.frame(names = factor(c("autophagic cell death", "methylation",
+                                "smooth muscle tissue development", "response to unfolded protein"),
+                                levels = c("autophagic cell death", "methylation",
+                                "smooth muscle tissue development", "response to unfolded protein")),
+                      adj.p.value = c(0.98, 1, 1, 1))
+
+B6_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,5)) 
+ggsave("../../Results/EFDR5/Fig_S3/Di.pdf", B6_enrichment, width = 3, height = 4)
+
+cur_dat <- data.frame(names = factor(c("post-embryonic development", "natural killer cell activation",
+                                "positive regulation of stress fiber assembly", "	lens development in camera-type eye"),
+                                levels = c("post-embryonic development", "natural killer cell activation",
+                                "positive regulation of stress fiber assembly", "	lens development in camera-type eye")),
+                      adj.p.value = c(1, 0.99, 0.98, 1))
+
+CAST_enrichment <- ggplot(cur_dat) + geom_col(aes(names, -log10(adj.p.value))) + 
+  geom_abline(intercept = 1, slope = 0) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylim(c(0,5)) 
+ggsave("../../Results/EFDR5/Fig_S3/Dii.pdf", CAST_enrichment, width = 3, height = 4)
+```
+
+# Comparison of over-dispersion values
+
+```{r}
+all.genes <- Test_DE$TableMean$GeneName[Test_DE$TableMean$ResultDiffMean != "ExcludedByUser"]
+
+variability <- ggplot(data.frame(
+  values = c(Test_DE$TableDisp$Disp1[Test_DE$TableDisp$GeneName %in% all.genes],
+                             Test_DE$TableDisp$Disp1[Test_DE$TableDisp$GeneName %in% B6.genes],
+                             Test_DE$TableDisp$Disp2[Test_DE$TableDisp$GeneName %in% all.genes],
+                             Test_DE$TableDisp$Disp2[Test_DE$TableDisp$GeneName %in% CAST.genes]),
+                  condition = c(rep("B6 all", length(all.genes)),
+                                rep("B6 specific", length(B6.genes)),
+                                rep("CAST all", length(all.genes)),
+                                rep("CAST specific", length(CAST.genes))))) +
+  geom_boxplot(aes(condition, log10(values)), outlier.colour = NA) + theme_minimal() + ylim(c(0,2))
+
+ggsave("../../Results/EFDR5/Fig_S3/E.pdf", variability, width = 5, height = 3)
+
+wilcox.test(log10(Test_DE$TableDisp$Disp1[Test_DE$TableDisp$GeneName %in% all.genes]),
+            log10(Test_DE$TableDisp$Disp1[Test_DE$TableDisp$GeneName %in% B6.genes]))
+# Significant
+
+wilcox.test(log10(Test_DE$TableDisp$Disp2[Test_DE$TableDisp$GeneName %in% all.genes]),
+            log10(Test_DE$TableDisp$Disp2[Test_DE$TableDisp$GeneName %in% CAST.genes]))
+# Significant
+```
+
+
+
+
