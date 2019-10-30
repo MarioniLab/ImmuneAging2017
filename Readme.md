@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3522970.svg)](https://doi.org/10.5281/zenodo.3522970)
+
 # R code used for data analysis of Jimenez-Martinez *et al.*, Science (2017)
 
 The R scripts for read mapping and counting, computational filtering (quality control), normalisation, differential expression analysis and for figure generation can be found in this repository. 
