@@ -20,6 +20,11 @@ ERCC.conc <- read.table("Data/ERCC_conc.txt", header=TRUE, sep = "\t", fill = TR
 ERCC.num <- matrix(data=NA, nrow=nrow(ERCC.conc), ncol=1)
 ERCC.num[,1] <- (ERCC.conc[,4]*(10^(-18)))*(6.0221417*(10^23))
 ERCC.num.final <- ERCC.num/50000 # dilution factor
+
+# Here, the volume of the well needs to be incorporated
+# In the original publication, we missed to scale the final ERCC counts by a factor of 
+# ERCC.num.final <- ERCC.num.final * 0.009
+
 rownames(ERCC.num) <- rownames(ERCC.num.final) <- ERCC.conc[,2]
 
 # Pre-scale reads to adjust for differences in library size
